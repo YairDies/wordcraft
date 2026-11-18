@@ -134,14 +134,14 @@ fn cmd_layers() -> Result<(), String> {
     }
 }
 
-/// Workspace packages that must build for wasm32: all L0–L5 crates plus
-/// the egui shell.
+/// Workspace packages that must build for wasm32: every L0–L5 crate.
+/// The front end is JavaScript, so no UI shell belongs in this set.
 fn wasm_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
         .into_iter()
         .filter(|c| match layers::classify(&c.name) {
-            Some(layers::Class::Layer(l)) => l <= 5 || layers::short_name(&c.name) == "ui-egui",
+            Some(layers::Class::Layer(l)) => l <= 5,
             Some(layers::Class::Standalone) => true,
             _ => false,
         })
@@ -177,7 +177,9 @@ fn nextest_available() -> bool {
 
 /// The interface audit, which `cmd_i18n_report` runs on its own so its report is printed.
 const I18N_AUDIT: &str = "i18n::audit::untranslated_interface_text";
-const I18N_AUDIT_FILTER: &str = "package(wordcraft-ui-egui) & test(=i18n::audit::untranslated_interface_text)";
+// The interface audit lived in the egui shell, which this branch removes. Until the Tauri
+// front end grows an equivalent, this filter selects nothing and the full suite runs.
+const I18N_AUDIT_FILTER: &str = "package(wordcraft-engine) & test(=i18n::audit::untranslated_interface_text)";
 
 fn cmd_test() -> Result<(), String> {
     test_run(&["-E", &format!("not ({I18N_AUDIT_FILTER})")], &["--skip", I18N_AUDIT])

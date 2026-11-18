@@ -46,12 +46,11 @@ pub const TABLE: &[(&str, Class)] = &[
     ("engine", Class::Layer(4)),
     ("mcp", Class::Layer(5)),
     ("zotero", Class::Layer(5)),
-    ("ui-egui", Class::Layer(6)),
     ("testkit", Class::Testkit),
     // apps and tooling
     ("wordcraft", Class::Exempt),
     ("cli", Class::Exempt),
-    ("web", Class::Exempt),
+    ("tauri", Class::Exempt),
     ("xtask", Class::Exempt),
 ];
 
@@ -244,8 +243,8 @@ mod tests {
             c("wordcraft-geom", &[("kurbo", Normal, false)]),
             c("wordcraft-doc", &[("wordcraft-geom", Normal, true)]),
             c("wordcraft-engine", &[("wordcraft-doc", Normal, true), ("wordcraft-testkit", Dev, true)]),
-            c("wordcraft-ui-egui", &[("wordcraft-engine", Normal, true), ("egui", Normal, false)]),
-            c("wordcraft-cli", &[("wordcraft-ui-egui", Normal, true)]),
+            c("wordcraft-mcp", &[("wordcraft-engine", Normal, true)]),
+            c("wordcraft-cli", &[("wordcraft-mcp", Normal, true)]),
         ];
         assert!(check(&g).is_empty(), "{:?}", check(&g));
     }
@@ -304,13 +303,13 @@ mod tests {
         assert!(check(&[c("wordcraft-render", &[("wordcraft-testkit", Dev, true)])]).is_empty());
         // testkit itself may use anything up to L5 but not L6 crates.
         assert!(check(&[c("wordcraft-testkit", &[("wordcraft-engine", Normal, true)])]).is_empty());
-        assert!(!check(&[c("wordcraft-testkit", &[("wordcraft-ui-egui", Normal, true)])]).is_empty());
     }
 
     #[test]
     fn apps_and_xtask_exempt() {
-        for app in ["wordcraft", "wordcraft-cli", "wordcraft-web", "xtask"] {
-            assert!(check(&[c(app, &[("egui", Normal, false), ("wordcraft-ui-egui", Normal, true)])]).is_empty());
+        for app in ["wordcraft-cli", "wordcraft-tauri", "xtask"] {
+            // An app may use UI crates directly; nothing below L6 may.
+            assert!(check(&[c(app, &[("egui", Normal, false)])]).is_empty());
         }
     }
 
