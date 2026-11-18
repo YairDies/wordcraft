@@ -190,14 +190,13 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     for (const original of waiting) {
       const view = apiRef.current.view;
       if (!view) return;
+      // The steps were written against the document that existed before the rebuild, so replaying
+      // them is a best effort: a step that no longer fits is dropped rather than thrown.
       let fresh = view.state.tr;
       for (const step of original.steps) {
         try {
-          const applied = fresh.step(step);
-          if (!applied) continue;
+          fresh.step(step);
         } catch {
-          // The engine removed the region this step edits: drop the step, as ProseMirror's own
-          // rebasing does, instead of failing the whole edit.
           continue;
         }
       }

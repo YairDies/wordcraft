@@ -47,6 +47,45 @@ themes. Keyboard map generated from the engine registry.
    `role=textbox`, `aria-multiline`, document text in the AX tree, typing reaching both the DOM
    and the AX tree, `Ctrl+B` formatting the text typed at the caret.
 
+## Phase 2 (continued) — the engine owns the cursor
+
+Text operations no longer carry a position. This is the architectural change that removed the
+failure class the bridge kept re-opening.
+
+**Before.** Every operation named a block path (`[3]`, `[2,0,1,0]`) computed when the edit was
+translated. A structural edit — Enter, a join — renumbered the blocks, so a keystroke translated
+during that window addressed a path that had already moved. Three attempts to shrink the window
+(deferred queue, timed reconcile, rebase) each moved it rather than closing it.
+
+**After.** The engine keeps its cursor (`Session::Selection`) between calls, exactly as Word's
+document object does:
+
+| Operation | Carries a position? |
+|---|---|
+| `InsertText { text }` | no |
+| `DeleteBack {}`, `DeleteForward {}`, `DeleteSelection {}` | no |
+| `SplitBlock {}` (Enter) | no |
+| `SetMark { mark, on }` | no — applies to the engine's selection |
+| `CursorMove { path, offset }`, `SelectRange {…}` | yes |
+
+Only the two operations that *move* the cursor name a place, and they are issued when the person
+clicks or uses an arrow key, not when they type. Every answer returns the cursor, so the view sends
+a `CursorMove` only when what it believes differs from what the engine reports. A position the
+engine owns cannot be moved underneath it.
+
+Structural changes still rebuild the view from `project_structure`, in the same reply that applied
+them, so there is no second read to go stale.
+
+### Undo: the engine is the authority
+
+There are not two histories. `edit.undo`/`edit.redo` run in Rust over the engine's own undo
+stack, and the view is corrected from the result — it holds no history of its own
+(`prosemirror-history` is deliberately not installed). A view-local undo would fork the document.
+
+`scripts/verify-history.mjs` pins this down: typing, Enter, undo, redo, undo after a merge, undo
+after a list and after a table, chained undos, and a final check that engine and view hold the same
+text.
+
 ## Phase 2 — the engine owns the document (done, minimal set)
 
 Selected architecture: **the engine is authoritative**. ProseMirror is a projection that sends
