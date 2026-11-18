@@ -22,7 +22,9 @@ export type SeedBlock =
 export type SyncOp =
   | { op: "InsertText"; path: number[]; offset: number; text: string }
   | { op: "DeleteRange"; from_path: number[]; from_offset: number; to_path: number[]; to_offset: number }
-  | { op: "SetMark"; path: number[]; from: number; to: number; mark: MarkName; on: boolean };
+  | { op: "SetMark"; path: number[]; from: number; to: number; mark: MarkName; on: boolean }
+  /** Enter: the engine splits the paragraph itself. */
+  | { op: "SplitBlock"; path: number[]; offset: number };
 
 export interface RunOut {
   text: string;

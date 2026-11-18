@@ -18,8 +18,10 @@ import { locate } from "./blocks";
  */
 export interface Translation {
   ops: SyncOp[];
-  /** The edit changed the document's structure; the engine must be re-seeded. */
-  structural?: string;
+  /** The edit changed the document's structure, so block paths must be refreshed afterwards. */
+  structural?: boolean;
+  /** Set when the edit cannot be expressed as engine operations at all. */
+  unsupported?: string;
 }
 
 /** The plain text of a slice, or null when it holds anything but text. */
@@ -38,31 +40,51 @@ function sliceText(slice: Slice): string | null {
 
 export function translateTransaction(tr: Transaction, paths: readonly number[][]): Translation {
   const ops: SyncOp[] = [];
+  let structural = false;
   const pathOf = (ordinal: number): number[] | null => paths[ordinal] ?? null;
 
   for (let i = 0; i < tr.steps.length; i += 1) {
     const step = tr.steps[i];
     const doc = tr.docs[i] ?? tr.before;
 
-    if (step instanceof ReplaceAroundStep) return { ops, structural: "wrapping or unwrapping a block" };
+    if (step instanceof ReplaceAroundStep) return { ops, structural: true };
 
     if (step instanceof ReplaceStep) {
       const from = locate(doc, step.from);
       const to = locate(doc, step.to);
-      if (!from || !to) return { ops, structural: "an edit outside a text block" };
-      if (from.ordinal !== to.ordinal) return { ops, structural: "an edit across paragraphs" };
+      if (!from || !to) return { ops, unsupported: "an edit outside a text block" };
+
+      const fromPath = pathOf(from.ordinal);
+      const toPath = pathOf(to.ordinal);
+      if (!fromPath || !toPath) return { ops, unsupported: `no engine block for paragraph ${from.ordinal}` };
+
+      // Enter: a collapsed caret with a block in the slice. The engine inserts the paragraph
+      // break itself, so the canonical document gains the paragraph at the same moment.
+      if (step.from === step.to && !sliceText(step.slice)?.length && step.slice.content.childCount > 0) {
+        ops.push({ op: "SplitBlock", path: fromPath, offset: from.offset });
+        structural = true;
+        continue;
+      }
+
+      // Across paragraphs: deleting the break between two of them joins them in the engine, which
+      // is exactly what Backspace at a paragraph start and Delete at a paragraph end do.
+      if (from.ordinal !== to.ordinal) {
+        const text = sliceText(step.slice);
+        if (text === null) return { ops, unsupported: "inserted non-text content across paragraphs" };
+        ops.push({ op: "DeleteRange", from_path: fromPath, from_offset: from.offset, to_path: toPath, to_offset: to.offset });
+        if (text) ops.push({ op: "InsertText", path: fromPath, offset: from.offset, text });
+        structural = true;
+        continue;
+      }
 
       const text = sliceText(step.slice);
-      if (text === null) return { ops, structural: "inserted non-text content" };
-
-      const path = pathOf(from.ordinal);
-      if (!path) return { ops, structural: `no engine block for paragraph ${from.ordinal}` };
+      if (text === null) return { ops, unsupported: "inserted non-text content" };
 
       if (step.to > step.from) {
-        ops.push({ op: "DeleteRange", from_path: path, from_offset: from.offset, to_path: path, to_offset: to.offset });
+        ops.push({ op: "DeleteRange", from_path: fromPath, from_offset: from.offset, to_path: fromPath, to_offset: to.offset });
       }
       if (text) {
-        ops.push({ op: "InsertText", path, offset: from.offset, text });
+        ops.push({ op: "InsertText", path: fromPath, offset: from.offset, text });
       }
       continue;
     }
@@ -70,18 +92,18 @@ export function translateTransaction(tr: Transaction, paths: readonly number[][]
     if (step instanceof AddMarkStep || step instanceof RemoveMarkStep) {
       const name = step.mark.type.name;
       if (name !== "bold" && name !== "italic" && name !== "underline" && name !== "strike") {
-        return { ops, structural: `the "${name}" mark` };
+        return { ops, unsupported: `the "${name}" mark` };
       }
       const from = locate(doc, step.from);
       const to = locate(doc, step.to);
-      if (!from || !to || from.ordinal !== to.ordinal) return { ops, structural: "formatting across paragraphs" };
+      if (!from || !to || from.ordinal !== to.ordinal) return { ops, unsupported: "formatting across paragraphs" };
       const path = pathOf(from.ordinal);
-      if (!path) return { ops, structural: `no engine block for paragraph ${from.ordinal}` };
+      if (!path) return { ops, unsupported: `no engine block for paragraph ${from.ordinal}` };
       ops.push({ op: "SetMark", path, from: from.offset, to: to.offset, mark: name, on: step instanceof AddMarkStep });
       continue;
     }
 
-    return { ops, structural: step.constructor?.name ?? "an unknown step" };
+    return { ops, unsupported: step.constructor?.name ?? "an unknown step" };
   }
-  return { ops };
+  return { ops, structural: structural || undefined };
 }

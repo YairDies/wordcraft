@@ -48,6 +48,9 @@ pub enum SyncOp {
     InsertText { path: Vec<u32>, offset: usize, text: String },
     DeleteRange { from_path: Vec<u32>, from_offset: usize, to_path: Vec<u32>, to_offset: usize },
     SetMark { path: Vec<u32>, from: usize, to: usize, mark: String, on: bool },
+    /// Split the paragraph at a caret: what Enter does. The engine inserts a paragraph break of
+    /// its own accord, so the new paragraph exists in the canonical document immediately.
+    SplitBlock { path: Vec<u32>, offset: usize },
 }
 
 /// A paragraph as the engine projects it.
@@ -266,6 +269,20 @@ pub fn apply_ops(session: &mut Session, ops: &[SyncOp]) -> Result<ApplyResult, S
                 session.run("text.delete", &json!({})).map_err(cmd_error)?;
                 changed.insert(from_path);
                 changed.insert(to_path);
+            }
+            SyncOp::SplitBlock { path, offset } => {
+                let at = position(&session.doc, &path, offset)?;
+                session.sel = wordcraft_engine::Selection::caret(at);
+                // text.newParagraph is Enter: it splits the paragraph and starts the next one with
+                // the same properties, which is exactly what Word does.
+                session.run("text.newParagraph", &json!({})).map_err(cmd_error)?;
+                changed.insert(path.clone());
+                // The split added a paragraph, so the block that follows it also changed.
+                let mut next = path.clone();
+                if let Some(last) = next.last_mut() {
+                    *last += 1;
+                }
+                changed.insert(next);
             }
             SyncOp::SetMark { path, from, to, mark, on } => {
                 let command = match mark.as_str() {

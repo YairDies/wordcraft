@@ -34,6 +34,24 @@ const clickTab = async (name) => {
   await page.waitForTimeout(300);
 };
 
+// Permanent regression guard: the import must land in the view complete. It once produced a
+// single block because the document was handed to updateState instead of dispatched through the
+// mounted view.
+const imported = await page.evaluate(() => {
+  const mirror = document.querySelector(".ProseMirror");
+  return {
+    children: mirror ? mirror.children.length : -1,
+    headings: document.querySelectorAll(".ProseMirror h1,.ProseMirror h2,.ProseMirror h3").length,
+    tables: document.querySelectorAll(".ProseMirror table").length,
+    lists: document.querySelectorAll(".ProseMirror ul,.ProseMirror ol").length,
+  };
+});
+const engineAfterImport = await page.evaluate(async () => {
+  const snapshot = await window.__TAURI_INTERNALS__.invoke("sync_snapshot", {});
+  return { paragraphs: snapshot.blocks.length, nested: snapshot.blocks.filter((b) => b.path.length > 1).length };
+});
+console.log("=== IMPORT ===", JSON.stringify(imported), JSON.stringify(engineAfterImport));
+
 const clickRibbon = async (labelPart, tab) => {
   if (tab) await clickTab(tab);
   const button = page.locator(`.ribbon-button[title*="${labelPart}"]`).first();
@@ -124,6 +142,8 @@ const final = await page.evaluate(async () => {
 const allText = final.blocks.map((b) => b.text).join("\n");
 const cellsInEngine = final.blocks.filter((b) => b.path.length > 1);
 const checks = {
+  importLandsComplete: imported.children >= 11 && imported.headings >= 3 && imported.tables >= 1 && imported.lists >= 2,
+  importReachesEngine: engineAfterImport.paragraphs >= 26 && engineAfterImport.nested >= 9,
   paragraphsSplit: afterSplit.hasFirst && afterSplit.hasSecond,
   engineSawSplit: afterSplit.paragraphs >= 3,
   paragraphsJoined: afterJoin.joined === true,
@@ -141,6 +161,7 @@ console.log("=== LIST ===", JSON.stringify(afterList));
 console.log("=== TABLE CELL PARAGRAPHS IN ENGINE ===", cellsInEngine.length);
 console.log("all engine paths:", JSON.stringify(final.blocks.map((b) => b.path)));
 console.log("cell paragraphs:", JSON.stringify(cellsInEngine.slice(0, 4)));
+console.log("engine paragraph texts:", JSON.stringify(final.blocks.map((b) => b.text.slice(0, 28))));
 console.log("imported paragraphs present:", final.blocks.some((b) => b.text.includes("WordCraft Accessibility Sample")));
 console.log("UI messages:", JSON.stringify(final.banners));
 console.log("=== LATENCY (ms) ===");

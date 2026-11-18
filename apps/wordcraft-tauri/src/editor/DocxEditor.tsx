@@ -56,34 +56,31 @@ const editorAttributes: Record<string, string> = {
 declare global {
   interface Window {
     __wcSyncSamples?: { roundTripMs: number; engineMs: number; ops: number }[];
-    /** Diagnostic switch: when true the editor talks to nothing, so the view can be observed alone. */
+    /** Diagnostic switch: disconnects the editor from the engine so the view can be observed. */
     __wcDisableSync?: boolean;
   }
 }
 
-/** Diagnostic only: disconnects the editor from the engine so the view can be checked on its own. */
 const syncDisabled = (): boolean => typeof window !== "undefined" && window.__wcDisableSync === true;
 
 /**
  * The editing surface.
  *
- * React never owns the editor state here: ProseMirror is mounted **uncontrolled**, so a keystroke
- * updates the view directly instead of re-rendering React. That matters for the bridge, because
- * the engine's answer arrives asynchronously and used to wait behind a React render — which is
- * where the 16 ms confirmation went, not in Rust or the IPC.
+ * ProseMirror is mounted **uncontrolled**: React never holds the editor state, so a keystroke
+ * updates the view directly. The engine owns the document; the view is its projection.
+ *
+ * Structural edits are engine operations now — Enter becomes `SplitBlock`, and deleting across
+ * paragraphs becomes a `DeleteRange` that the engine turns into a join. Nothing re-seeds the
+ * document, so the engine keeps its undo and the view is never rebuilt underneath the typing.
  */
 export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps) {
   const [mount, setMount] = useState<HTMLElement | null>(null);
   const plugins = useMemo(buildPlugins, []);
   const pending = useRef<SyncOp[]>([]);
+  const pendingStructural = useRef(false);
   const scheduled = useRef(false);
   const syncing = useRef(false);
   const snapshotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Coalesces structural edits: the engine is rebuilt once the burst settles. */
-  const reseedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reseeding = useRef(false);
-  /** Bumped on every edit, so a rebuild that raced new typing can notice and repeat. */
-  const docRevision = useRef(0);
   /** Engine path for each ProseMirror textblock ordinal, in document order. */
   const paths = useRef<number[][]>([]);
 
@@ -95,7 +92,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     }),
   );
 
-  /** Push the engine's projection into the view, block by block, only where it differs. */
+  /** Apply the engine's blocks to the view, block by block, only where they differ. */
   const reconcile = useCallback(
     (blocks: BlockOut[]) => {
       const view = apiRef.current.view;
@@ -103,10 +100,9 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       const ordinalOf = new Map<string, number>();
       paths.current.forEach((path, ordinal) => ordinalOf.set(pathKey(path), ordinal));
 
-      // Positions come from the document as it is now, so applying a replacement changes the
-      // positions of everything after it. Walking from the end backwards keeps every later
-      // position valid; doing it forwards collapsed the document to a single block.
-      const ordered = [...blocks]
+      // Positions come from the current document, so a replacement shifts everything after it.
+      // Walking backwards keeps every later position valid.
+      const ordered = blocks
         .map((block) => ({ block, ordinal: ordinalOf.get(pathKey(block.path)) }))
         .filter((entry): entry is { block: BlockOut; ordinal: number } => entry.ordinal !== undefined)
         .sort((a, b) => b.ordinal - a.ordinal);
@@ -132,62 +128,28 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     [apiRef, onUnsupported],
   );
 
-  /**
-   * Rebuild the engine's document from the editor's own, then re-map every block path.
-   *
-   * Typing does not stop while this is in flight, so the rebuild repeats until the document has
-   * not changed since the seed was taken. Without that, edits made during the round trip were sent
-   * against an engine that was about to be replaced, and the replacement deleted them — typed
-   * text came back as "SEUNDO".
-   */
-  const reseed = useCallback(async () => {
-    if (reseeding.current) return;
+  /** Re-read the engine's block paths and projection. Structure moved, the document did not. */
+  const refreshPaths = useCallback(async () => {
     const view = apiRef.current.view;
     if (!view || !isTauri()) return;
-    reseeding.current = true;
     try {
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const view = apiRef.current.view;
-        if (!view) return;
-        const revision = docRevision.current;
-        const { blocks, problem } = buildSeed(view.state.doc);
-        if (problem) {
-          onUnsupported?.(`the engine cannot hold this document yet: ${problem}`);
-          return;
-        }
-        // Counted from the same document the seed was built from. Reading it after the round trip
-        // compares the engine against a document that has moved on, which silently rejected every
-        // seed and left the paths unset — the imported document never reached the engine.
-        const expected = textblockCount(view.state.doc);
-        const projection = await syncLoad(blocks);
-        if (projection.blocks.length !== expected) {
-          onUnsupported?.(`the engine built ${projection.blocks.length} paragraphs for ${expected} blocks`);
-          return;
-        }
-        paths.current = projection.blocks.map((block) => block.path);
-        reconcile(projection.blocks);
-        if (docRevision.current === revision) return;
+      const snapshot = await syncSnapshot();
+      if (snapshot.blocks.length !== textblockCount(view.state.doc)) {
+        onUnsupported?.(`the engine has ${snapshot.blocks.length} paragraphs, the view ${textblockCount(view.state.doc)}`);
+        return;
       }
+      paths.current = snapshot.blocks.map((block) => block.path);
+      reconcile(snapshot.blocks);
     } catch (problem) {
       onUnsupported?.(String(problem));
-    } finally {
-      reseeding.current = false;
     }
   }, [apiRef, reconcile, onUnsupported]);
-
-  const scheduleReseed = useCallback(() => {
-    if (reseedTimer.current) clearTimeout(reseedTimer.current);
-    reseedTimer.current = setTimeout(() => {
-      reseedTimer.current = null;
-      void reseed();
-    }, 80);
-  }, [reseed]);
 
   const scheduleSnapshot = useCallback(() => {
     if (snapshotTimer.current) clearTimeout(snapshotTimer.current);
     snapshotTimer.current = setTimeout(() => {
       snapshotTimer.current = null;
-      if (!isTauri()) return;
+      if (!isTauri() || syncDisabled()) return;
       void syncSnapshot()
         .then((snapshot) => reconcile(snapshot.blocks))
         .catch((problem) => onUnsupported?.(String(problem)));
@@ -198,7 +160,9 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     scheduled.current = false;
     if (syncing.current) return;
     const ops = pending.current;
+    const structural = pendingStructural.current;
     pending.current = [];
+    pendingStructural.current = false;
     if (!ops.length) return;
     syncing.current = true;
     const started = performance.now();
@@ -207,6 +171,9 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       onSynced?.({ roundTripMs: performance.now() - started, engineMs: delta.micros / 1000, ops: ops.length });
       window.__wcSyncSamples = window.__wcSyncSamples ?? [];
       window.__wcSyncSamples.push({ roundTripMs: performance.now() - started, engineMs: delta.micros / 1000, ops: ops.length });
+      // A structural operation renumbers the blocks, so the paths are re-read from the engine
+      // rather than the document being rebuilt.
+      if (structural) await refreshPaths();
     } catch (problem) {
       onUnsupported?.(String(problem));
     } finally {
@@ -216,20 +183,16 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         queueMicrotask(() => void flush());
       } else if (!pending.current.length) {
         // Only when the burst is over: correcting the view mid-burst would rewrite the block
-        // with a projection that lacks the characters still queued, deleting them and shifting
-        // every following offset.
+        // with a projection that lacks the characters still queued.
         scheduleSnapshot();
       }
     }
-  }, [onSynced, onUnsupported, scheduleSnapshot]);
+  }, [onSynced, onUnsupported, refreshPaths, scheduleSnapshot]);
 
   const enqueue = useCallback(
-    (ops: SyncOp[]) => {
-      // While a rebuild is pending or running the engine is about to be replaced; sending
-      // operations now would apply them to the outgoing document. The rebuild captures whatever
-      // was typed in the meantime.
-      if (reseeding.current || reseedTimer.current) return;
+    (ops: SyncOp[], structural: boolean) => {
       pending.current.push(...ops);
+      if (structural) pendingStructural.current = true;
       if (snapshotTimer.current) {
         clearTimeout(snapshotTimer.current);
         snapshotTimer.current = null;
@@ -244,7 +207,6 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
   const dispatchTransaction = useCallback(
     function (this: EditorView, tr: Transaction) {
       const view = this;
-      // The engine's own correction coming back: apply it, never bounce it out again.
       if (tr.getMeta("engineSync")) {
         view.updateState(view.state.apply(tr));
         return;
@@ -253,19 +215,16 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         view.updateState(view.state.apply(tr));
         return;
       }
-      docRevision.current += 1;
-      const { ops, structural } = translateTransaction(tr, paths.current);
-      view.updateState(view.state.apply(tr));
-      if (structural) {
-        // Enter, a joined paragraph, a new list or table: the engine is rebuilt from what the
-        // view now holds, so its copy stays complete instead of drifting.
-        pending.current = [];
-        scheduleReseed();
+      const { ops, structural, unsupported } = translateTransaction(tr, paths.current);
+      if (unsupported) {
+        // The engine is the authority: an edit it cannot express must not exist only in the view.
+        onUnsupported?.(unsupported);
         return;
       }
-      if (ops.length) enqueue(ops);
+      view.updateState(view.state.apply(tr));
+      if (ops.length) enqueue(ops, structural === true);
     },
-    [enqueue, scheduleReseed],
+    [enqueue, onUnsupported],
   );
 
   useEffect(() => {
@@ -273,9 +232,32 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       const view = apiRef.current.view;
       if (!view) return;
       const { doc } = normalizeDocxJson(json, wordcraftSchema);
-      view.updateState(EditorState.create({ schema: wordcraftSchema, doc, plugins, selection: Selection.atStart(doc) }));
+      // A transaction on the mounted view, not a fresh EditorState handed to updateState: this
+      // library renders the document through React and owns the state it renders, so an
+      // EditorState built outside it never reached the screen.
+      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
+      tr.setSelection(Selection.atStart(tr.doc));
+      tr.setMeta("engineSync", true);
+      view.dispatch(tr);
       paths.current = [];
-      void reseed();
+      // The one place the front end seeds the engine: after this the engine owns the text.
+      if (!isTauri() || syncDisabled()) return;
+      const { blocks, problem } = buildSeed(view.state.doc);
+      if (problem) {
+        onUnsupported?.(`the engine cannot hold this document yet: ${problem}`);
+        return;
+      }
+      const expected = textblockCount(view.state.doc);
+      void syncLoad(blocks)
+        .then((projection) => {
+          if (projection.blocks.length !== expected) {
+            onUnsupported?.(`the engine built ${projection.blocks.length} paragraphs for ${expected} blocks`);
+            return;
+          }
+          paths.current = projection.blocks.map((block) => block.path);
+          reconcile(projection.blocks);
+        })
+        .catch((problem) => onUnsupported?.(String(problem)));
     };
     apiRef.current.focus = () => apiRef.current.view?.focus();
     apiRef.current.resync = () => {
@@ -284,7 +266,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         .then((snapshot) => reconcile(snapshot.blocks))
         .catch((problem) => onUnsupported?.(String(problem)));
     };
-  }, [apiRef, plugins, reconcile, reseed, onUnsupported]);
+  }, [apiRef, plugins, reconcile, onUnsupported]);
 
   return (
     <ProseMirror mount={mount} defaultState={initialState} dispatchTransaction={dispatchTransaction} attributes={editorAttributes}>
