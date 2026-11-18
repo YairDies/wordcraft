@@ -1,0 +1,6 @@
+# pnpm 10+ keeps build-script approvals here (the `pnpm` field in package.json is ignored, and
+# pnpm 12 renamed this setting to `allowBuilds`, a map of package name to allowed). esbuild's
+# postinstall places the platform binary that `vite build` runs; without it a fresh clone cannot
+# build the front end.
+allowBuilds:
+  esbuild: true

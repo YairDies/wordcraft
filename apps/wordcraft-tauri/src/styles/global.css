@@ -1,0 +1,59 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  overflow: hidden;
+}
+
+/* The ribbon's command buttons: Word's dense, flat look, on the native button element so the
+   keyboard, screen readers and `:focus-visible` all behave without extra work. */
+.ribbon-button {
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 5px 9px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--colorNeutralForeground1, #1a1a1a);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ribbon-button:hover:not(:disabled) {
+  background: var(--colorNeutralBackground1Hover, #f3f2f1);
+  border-color: var(--colorNeutralStroke2, #e0e0e0);
+}
+
+.ribbon-button:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2, #0f6cbd);
+  outline-offset: 1px;
+}
+
+.ribbon-button:disabled {
+  color: var(--colorNeutralForegroundDisabled, #bdbdbd);
+  cursor: default;
+}
+
+/* Screen-reader users can jump past the ribbon and land in the document. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 8px;
+  z-index: 100;
+  padding: 8px 12px;
+  background: var(--colorNeutralBackground1, #fff);
+  color: var(--colorNeutralForeground1, #000);
+  border: 1px solid var(--colorNeutralStroke1, #ccc);
+  border-radius: 4px;
+}
+
+.skip-link:focus {
+  left: 8px;
+}

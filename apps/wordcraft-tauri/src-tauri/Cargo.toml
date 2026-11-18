@@ -1,0 +1,24 @@
+[package]
+name = "wordcraft-tauri"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "WordCraft desktop shell: a Tauri 2 host that bridges wordcraft-engine to the Fluent UI React front end"
+
+[lints]
+workspace = true
+
+[lib]
+# Tauri loads the mobile entry point from a library; main.rs stays a thin shim.
+name = "wordcraft_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+wordcraft-engine = { workspace = true }
+wordcraft-render = { workspace = true }

@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask"]
+# Explicit rather than "apps/*": apps/wordcraft-tauri holds the Tauri front end (no manifest of
+# its own), and its Rust crate lives in src-tauri/, which the glob would not reach.
+members = ["crates/*", "apps/wordcraft", "apps/wordcraft-cli", "apps/wordcraft-web", "apps/wordcraft-tauri/src-tauri", "xtask"]
 default-members = ["crates/*", "apps/wordcraft", "apps/wordcraft-cli", "xtask"]
 
 [workspace.package]
