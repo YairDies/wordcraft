@@ -82,6 +82,11 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
   const scheduled = useRef(false);
   const syncing = useRef(false);
   const snapshotTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Local edits made while a structural operation is in flight, waiting to be rebased onto it. */
+  const deferred = useRef<Transaction[]>([]);
+  const structuralInFlight = useRef(false);
+  /** Set after `enqueue` exists: replay and flush reference each other and form a cycle. */
+  const enqueueRef = useRef<(ops: SyncOp[], structural: boolean) => void>(() => {});
   /** Engine path for each ProseMirror textblock ordinal, in document order. */
   const paths = useRef<number[][]>([]);
 
@@ -168,6 +173,42 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     }, 140);
   }, [reconcile, onUnsupported]);
 
+  /**
+   * Re-applies the edits made while the structural operation was in flight.
+   *
+   * They were applied to the view optimistically and the engine never saw them, so the rebuild
+   * discarded them. Each one is replayed onto the engine's document and translated again against
+   * the *new* block paths; a step that no longer fits is dropped rather than thrown.
+   */
+  const replayDeferred = useCallback(() => {
+    const waiting = deferred.current;
+    deferred.current = [];
+    structuralInFlight.current = false;
+    for (const original of waiting) {
+      const view = apiRef.current.view;
+      if (!view) return;
+      let fresh = view.state.tr;
+      for (const step of original.steps) {
+        try {
+          const applied = fresh.step(step);
+          if (!applied) continue;
+        } catch {
+          // The engine removed the region this step edits: drop the step, as ProseMirror's own
+          // rebasing does, instead of failing the whole edit.
+          continue;
+        }
+      }
+      if (!fresh.docChanged) continue;
+      view.updateState(view.state.apply(fresh));
+      const { ops, structural: becameStructural, unsupported } = translateTransaction(fresh, paths.current);
+      if (unsupported) {
+        onUnsupported?.(unsupported);
+        continue;
+      }
+      if (ops.length) enqueueRef.current(ops, becameStructural === true);
+    }
+  }, [apiRef, onUnsupported]);
+
   const flush = useCallback(async () => {
     scheduled.current = false;
     if (syncing.current) return;
@@ -177,6 +218,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     pendingStructural.current = false;
     if (!ops.length) return;
     syncing.current = true;
+    if (structural) structuralInFlight.current = true;
     const started = performance.now();
     try {
       const delta = await syncApply(ops, structural);
@@ -188,6 +230,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       // in this same reply rather than patched against stale indices.
       if (structural && delta.structure && delta.paths) {
         rebuildFromEngine(delta.structure, delta.paths, delta.caret);
+        replayDeferred();
       }
     } catch (problem) {
       onUnsupported?.(String(problem));
@@ -202,7 +245,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         scheduleSnapshot();
       }
     }
-  }, [onSynced, onUnsupported, rebuildFromEngine, scheduleSnapshot]);
+  }, [onSynced, onUnsupported, rebuildFromEngine, replayDeferred, scheduleSnapshot]);
 
   const enqueue = useCallback(
     (ops: SyncOp[], structural: boolean) => {
@@ -218,6 +261,10 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     },
     [flush],
   );
+
+  useEffect(() => {
+    enqueueRef.current = enqueue;
+  }, [enqueue]);
 
   const dispatchTransaction = useCallback(
     function (this: EditorView, tr: Transaction) {
@@ -237,6 +284,12 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         return;
       }
       view.updateState(view.state.apply(tr));
+      if (structuralInFlight.current) {
+        // A structural operation is in flight: this edit belongs on top of whatever the engine
+        // answers, not on top of indices that are about to move.
+        deferred.current.push(tr);
+        return;
+      }
       if (ops.length) enqueue(ops, structural === true);
     },
     [enqueue, onUnsupported],
