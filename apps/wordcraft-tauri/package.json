@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@docen/import-docx": "^0.2.9",
+    "@fluentui-contrib/react-keytips": "^0.4.4",
     "@fluentui/react-components": "^9.54.0",
     "@fluentui/react-icons": "^2.0.258",
     "@nytimes/react-prosemirror": "^2.0.1",

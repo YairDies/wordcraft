@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FluentProvider, MessageBar, MessageBarBody, makeStyles, tokens } from "@fluentui/react-components";
+import { Keytips } from "@fluentui-contrib/react-keytips";
 import { getCatalog, getState, isTauri, runCommand } from "./bridge/engine";
 import type { CommandSpec, DocumentState } from "./bridge/engine";
-import { buildRibbon } from "./shell/ribbonModel";
-import { Ribbon } from "./shell/Ribbon";
 import { StatusBar } from "./shell/StatusBar";
 import type { SyncSample } from "./shell/StatusBar";
 import { TitleBar } from "./shell/TitleBar";
-import { matchesShortcut } from "./a11y/shortcuts";
 import { themes, type ThemeMode } from "./theme/themes";
 import { DocxEditor } from "./editor/DocxEditor";
 import type { EditorApi } from "./editor/DocxEditor";
 import { applyEditorCommand } from "./editor/commands";
 import { importDocxFile } from "./editor/openDocx";
 import { wordcraftSchema } from "./editor/schema";
+import { Ribbon } from "./ribbon/Ribbon";
+import { COMMANDS } from "./keyboard/map";
+import { detectLocale, storeLocale } from "./keyboard/locale";
+import type { Locale } from "./keyboard/locale";
+import { matchesAccelerator, useShortcuts } from "./keyboard/shortcuts";
+import { ShortcutDialog } from "./keyboard/ShortcutDialog";
 
 const useStyles = makeStyles({
   app: {
@@ -39,27 +43,33 @@ export function App() {
   const styles = useStyles();
   const [catalog, setCatalog] = useState<CommandSpec[]>([]);
   const [doc, setDoc] = useState<DocumentState | null>(null);
-  const [tab, setTab] = useState("Home");
+  const [tab, setTab] = useState("tab.home");
   const [theme, setTheme] = useState<ThemeMode>("light");
+  const [locale, setLocale] = useState<Locale>(detectLocale);
   const [zoom] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [shortcutDialog, setShortcutDialog] = useState(false);
+  const [syncSample, setSyncSample] = useState<SyncSample | null>(null);
+
+  const shortcuts = useShortcuts(locale);
   const catalogRef = useRef<CommandSpec[]>([]);
   catalogRef.current = catalog;
-
   const editorApi = useRef<EditorApi>({ view: null, loadDocument: () => {}, focus: () => {}, resync: () => {} });
-  const [syncSample, setSyncSample] = useState<SyncSample | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
-  const tabs = useMemo(() => buildRibbon(catalog), [catalog]);
 
   const refresh = useCallback(async () => {
     try {
       setDoc(await getState());
     } catch {
-      // The shell still works without the engine summary; the editor is the primary surface.
+      // The shell works without the engine summary; the editor is the primary surface.
     }
   }, []);
+
+  useEffect(() => {
+    storeLocale(locale);
+  }, [locale]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -97,9 +107,20 @@ export function App() {
   }, []);
 
   const run = useCallback(
-    async (command: CommandSpec | string) => {
-      const id = typeof command === "string" ? command : command.id;
-      // The editing surface answers its own commands; everything else is the engine's.
+    async (id: string) => {
+      // Tabs are shell navigation, not engine commands.
+      if (id.startsWith("tab.")) {
+        setTab(id);
+        return;
+      }
+      if (id === "view.theme") {
+        setTheme((current) => (current === "light" ? "dark" : current === "dark" ? "high-contrast" : "light"));
+        return;
+      }
+      if (id === "file.save") {
+        setNotice("Saving is not wired to the engine yet.");
+        return;
+      }
       if (applyEditorCommand(id, editorApi.current.view)) {
         setError(null);
         return;
@@ -112,8 +133,6 @@ export function App() {
         await runCommand(id);
         setError(null);
         await refresh();
-        // Any command that did not travel through the translator may have changed the canonical
-        // document, so the view is corrected from the engine's own projection.
         editorApi.current.resync();
       } catch (problem) {
         setError(String(problem));
@@ -122,27 +141,48 @@ export function App() {
     [refresh],
   );
 
+  /**
+   * The keyboard, fed by the single map. The editor answers its own commands first; anything else
+   * is the engine's. Accelerators are resolved per language and per the person's reassignments.
+   */
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      // Inside the editor, ProseMirror owns the keys; the shell must not steal them.
       if (target?.closest("input, textarea, [contenteditable='true'], .ProseMirror")) return;
-      const match = catalogRef.current.find((command) => command.shortcut && matchesShortcut(event, command.shortcut));
-      if (!match) return;
-      event.preventDefault();
-      void run(match);
+      for (const command of COMMANDS) {
+        const accelerator = shortcuts.shortcutFor(command.id);
+        if (!accelerator) continue;
+        if (!matchesAccelerator(event, accelerator)) continue;
+        event.preventDefault();
+        void run(command.id);
+        return;
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [run]);
+  }, [run, shortcuts]);
+
+  const tabs = useMemo(() => COMMANDS.filter((command) => command.id.startsWith("tab.")), []);
 
   return (
     <FluentProvider theme={themes[theme]} className={styles.app} data-theme={theme}>
+      {/* Keytips must live once, at the root of the FluentProvider. Word's entry key is Alt
+          alone; the package defaults to Alt-Meta, which is not what Word users press. */}
+      <Keytips startSequence="alt" />
       <a className="skip-link" href="#wc-document">
         Skip to document
       </a>
-      <TitleBar doc={doc} theme={theme} onThemeChange={setTheme} onRun={run} onOpen={() => fileInput.current?.click()} />
-      <Ribbon tabs={tabs} activeTab={tab} onSelectTab={setTab} onRun={run} disabled={false} />
+      <TitleBar
+        doc={doc}
+        theme={theme}
+        locale={locale}
+        onLocaleChange={setLocale}
+        onThemeChange={setTheme}
+        onRun={run}
+        onOpen={() => fileInput.current?.click()}
+        onOpenShortcuts={() => setShortcutDialog(true)}
+      />
+      <Ribbon activeTab={tab} onSelectTab={setTab} onRun={run} shortcuts={shortcuts} />
       <input
         ref={fileInput}
         type="file"
@@ -164,7 +204,7 @@ export function App() {
         </MessageBar>
       ) : null}
       <span id="wc-editor-hint" hidden>
-        Editing area. Use the ribbon or Word keyboard shortcuts to format the text.
+        Editing area. Use the ribbon, its keytips (Alt) or Word's keyboard shortcuts.
       </span>
       <div
         id="wc-document"
@@ -183,13 +223,14 @@ export function App() {
       >
         <DocxEditor
           apiRef={editorApi}
+          resolveShortcut={shortcuts.shortcutFor}
           onSynced={setSyncSample}
-          onUnsupported={(reason) =>
-            setError(`That edit is not synchronised with the engine yet: ${reason}.`)
-          }
+          onUnsupported={(reason) => setError(`That edit is not synchronised with the engine yet: ${reason}.`)}
         />
       </div>
       <StatusBar doc={doc} zoom={zoom} sync={syncSample} />
+      <ShortcutDialog open={shortcutDialog} onClose={() => setShortcutDialog(false)} shortcuts={shortcuts} />
+      <input type="hidden" value={tabs.length} readOnly />
     </FluentProvider>
   );
 }

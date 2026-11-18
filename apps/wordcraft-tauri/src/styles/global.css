@@ -56,6 +56,25 @@ body {
   left: 8px;
 }
 
+/* ---------- Keytip portals ----------
+   The keytips root renders a portal as large as the window with pointer events on, so while
+   keytip mode is active it swallowed every click aimed at the document. The portal container
+   stops intercepting; the portals that are genuinely interactive — menus, dialogs, listboxes —
+   keep their events. */
+[data-portal-node] {
+  pointer-events: none;
+}
+
+[data-portal-node] [role="dialog"],
+[data-portal-node] [role="menu"],
+[data-portal-node] [role="listbox"],
+[data-portal-node] [role="menuitem"],
+[data-portal-node] [role="option"],
+[data-portal-node] button,
+[data-portal-node] input {
+  pointer-events: auto;
+}
+
 /* ---------- The document sheet ---------- */
 .wc-sheet {
   background: #ffffff;

@@ -9,9 +9,17 @@ import {
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
-import { ArrowRedoRegular, ArrowUndoRegular, FolderOpenRegular, SaveRegular, WeatherSunnyRegular } from "@fluentui/react-icons";
+import {
+  ArrowRedoRegular,
+  ArrowUndoRegular,
+  FolderOpenRegular,
+  KeyboardRegular,
+  LocalLanguageRegular,
+  WeatherSunnyRegular,
+} from "@fluentui/react-icons";
 import type { DocumentState } from "../bridge/engine";
 import { themeLabels, type ThemeMode } from "../theme/themes";
+import type { Locale } from "../keyboard/locale";
 
 const useStyles = makeStyles({
   bar: {
@@ -38,32 +46,40 @@ const useStyles = makeStyles({
 interface TitleBarProps {
   doc: DocumentState | null;
   theme: ThemeMode;
+  locale: Locale;
   onThemeChange: (theme: ThemeMode) => void;
+  onLocaleChange: (locale: Locale) => void;
   onRun: (id: string) => void;
   onOpen: () => void;
+  onOpenShortcuts: () => void;
 }
 
 /** The quick access bar and the document title, mirroring Word's title strip. */
-export function TitleBar({ doc, theme, onThemeChange, onRun, onOpen }: TitleBarProps) {
+export function TitleBar({ doc, theme, locale, onThemeChange, onLocaleChange, onRun, onOpen, onOpenShortcuts }: TitleBarProps) {
   const styles = useStyles();
   const label = doc ? `${doc.title}${doc.dirty ? " *" : ""} - WordCraft` : "WordCraft";
   return (
     <div className={styles.bar}>
       <Toolbar aria-label="Quick access toolbar" size="small">
-        <ToolbarButton
-          icon={<FolderOpenRegular />}
-          onClick={onOpen}
-          aria-label="Open a .docx file"
-          title="Open"
-          aria-keyshortcuts="Control+O"
-        />
-        <ToolbarButton icon={<SaveRegular />} onClick={() => onRun("file.save")} aria-label="Save" title="Save" aria-keyshortcuts="Control+S" />
-        <ToolbarButton icon={<ArrowUndoRegular />} onClick={() => onRun("edit.undo")} aria-label="Undo" title="Undo" aria-keyshortcuts="Control+Z" />
-        <ToolbarButton icon={<ArrowRedoRegular />} onClick={() => onRun("edit.redo")} aria-label="Redo" title="Redo" aria-keyshortcuts="Control+Y" />
+        <ToolbarButton icon={<FolderOpenRegular />} onClick={onOpen} aria-label="Open a .docx file" title="Open" />
+        <ToolbarButton icon={<ArrowUndoRegular />} onClick={() => onRun("edit.undo")} aria-label="Undo" title="Undo" />
+        <ToolbarButton icon={<ArrowRedoRegular />} onClick={() => onRun("edit.redo")} aria-label="Redo" title="Redo" />
       </Toolbar>
       <span className={styles.title} role="heading" aria-level={1}>
         {label}
       </span>
+      <ToolbarButton icon={<KeyboardRegular />} onClick={onOpenShortcuts} aria-label="Keyboard shortcuts" title="Keyboard shortcuts" />
+      <Menu>
+        <MenuTrigger disableButtonEnhancement>
+          <ToolbarButton icon={<LocalLanguageRegular />} aria-label="Interface language" title={`Language: ${locale === "es" ? "Español" : "English"}`} />
+        </MenuTrigger>
+        <MenuPopover>
+          <MenuList>
+            <MenuItem onClick={() => onLocaleChange("es")}>Español{locale === "es" ? " ✓" : ""}</MenuItem>
+            <MenuItem onClick={() => onLocaleChange("en")}>English{locale === "en" ? " ✓" : ""}</MenuItem>
+          </MenuList>
+        </MenuPopover>
+      </Menu>
       <Menu>
         <MenuTrigger disableButtonEnhancement>
           <ToolbarButton icon={<WeatherSunnyRegular />} aria-label="View theme" title="View theme" />

@@ -28,17 +28,36 @@ export interface EditorApi {
 
 interface DocxEditorProps {
   apiRef: { current: EditorApi };
+  /** Resolves a command id to the accelerator in force for the current language and preferences. */
+  resolveShortcut: (id: string) => string;
   onUnsupported?: (reason: string) => void;
   onSynced?: (sample: { roundTripMs: number; engineMs: number; ops: number }) => void;
 }
 
-function buildPlugins() {
+/**
+ * The editor's keymap comes from the same shortcut map as the ribbon and the shell, so a Spanish
+ * interface really does get Ctrl+N for bold: the key is the mnemonic of the word.
+ */
+function buildPlugins(resolve: (id: string) => string) {
+  const bind = (id: string, mark: "bold" | "italic" | "underline") => {
+    const accelerator = resolve(id);
+    if (!accelerator) return {};
+    const spec = accelerator
+      .split("+")
+      .map((part) => {
+        const p = part.trim();
+        if (p === "Mod" || p === "Ctrl" || p === "Alt" || p === "Shift") return p;
+        return p.length === 1 ? p.toLowerCase() : p;
+      })
+      .join("-");
+    return { [spec]: toggleMark(wordcraftSchema.marks[mark]) };
+  };
   return [
     tableEditing(),
     keymap({
-      "Mod-b": toggleMark(wordcraftSchema.marks.bold),
-      "Mod-i": toggleMark(wordcraftSchema.marks.italic),
-      "Mod-u": toggleMark(wordcraftSchema.marks.underline),
+      ...bind("format.bold", "bold"),
+      ...bind("format.italic", "italic"),
+      ...bind("format.underline", "underline"),
     }),
     keymap(baseKeymap),
   ];
@@ -74,9 +93,9 @@ const syncDisabled = (): boolean => typeof window !== "undefined" && window.__wc
  * paragraphs becomes a `DeleteRange` that the engine turns into a join. Nothing re-seeds the
  * document, so the engine keeps its undo and the view is never rebuilt underneath the typing.
  */
-export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps) {
+export function DocxEditor({ apiRef, resolveShortcut, onUnsupported, onSynced }: DocxEditorProps) {
   const [mount, setMount] = useState<HTMLElement | null>(null);
-  const plugins = useMemo(buildPlugins, []);
+  const plugins = useMemo(() => buildPlugins(resolveShortcut), [resolveShortcut]);
   const pending = useRef<SyncOp[]>([]);
   const pendingStructural = useRef(false);
   const scheduled = useRef(false);
