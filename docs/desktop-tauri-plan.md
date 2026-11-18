@@ -47,7 +47,40 @@ themes. Keyboard map generated from the engine registry.
    `role=textbox`, `aria-multiline`, document text in the AX tree, typing reaching both the DOM
    and the AX tree, `Ctrl+B` formatting the text typed at the caret.
 
-## Next: Phase 2 — the engine becomes the model again
+## Phase 2 — the engine owns the document (done, minimal set)
+
+Selected architecture: **the engine is authoritative**. ProseMirror is a projection that sends
+operations and applies the engine's answers.
+
+1. **Protocol** (`apps/wordcraft-tauri/src-tauri/src/sync.rs`): `sync_load` seeds the canonical
+   document, `sync_apply` takes a batch of `InsertText` / `DeleteRange` / `SetMark` operations
+   and answers with the changed blocks only, `sync_snapshot` re-reads everything after a command
+   that bypassed the translator.
+2. **Translator** (`src/editor/translate.ts`): ProseMirror steps → engine operations, positions
+   read against `tr.docs[i]` so both sides stay in step.
+3. **Engine applies to its model**: `text.insert`, `text.delete` (Track Changes aware) and
+   `format.bold`/`format.italic` through `Session::run`, so undo and revisions stay in Rust.
+4. **Minimal set validated**: insert, delete, bold, italic — 9 Rust tests including accent and
+   emoji offset conversion, AutoCorrect, and an engine latency bound.
+5. **Measured**: engine 0.2 ms p50; key to view 2.0 ms p50 / 3.4 ms p95; confirmation round trip
+   16.8 ms p50 / 48.1 ms p95.
+
+### Three bugs this cycle caught, all real
+
+- Offsets were computed from `ResolvedPos.start(0)`, which is the document start, so every edit
+  carried an absolute position; text landed in the wrong paragraph.
+- Reconciling the view from the engine *between* keystrokes deleted the characters that were still
+  in flight, and every later offset shifted — typed text arrived as "escribpido".
+- Fluent Tooltip portals covered the document and swallowed clicks aimed at the editor.
+
+### Deliberately out of scope
+
+Structural edits (Enter, joining paragraphs, deleting across paragraphs, lists, tables, images).
+The translator refuses them; the front end reports the refusal instead of applying an edit the
+engine cannot represent. Lists and tables are seeded into the engine as **empty placeholder
+blocks** so block indices stay aligned; their text is not engine-owned yet.
+
+## Next: Phase 3 — the structural model
 
 ProseMirror is currently the editing surface *and* the document of record; the Rust engine is only
 consulted for its command catalog. The two must be joined:

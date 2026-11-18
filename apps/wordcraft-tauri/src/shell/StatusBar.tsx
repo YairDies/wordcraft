@@ -16,25 +16,30 @@ const useStyles = makeStyles({
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
   },
   left: { display: "flex", gap: "18px" },
-  status: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-  },
+  status: { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
 });
 
-/** Word's status bar: where you are, and what the engine last said. */
-export function StatusBar({ doc, zoom }: { doc: DocumentState | null; zoom: number }) {
+export interface SyncSample {
+  roundTripMs: number;
+  engineMs: number;
+  ops: number;
+}
+
+/** Word's status bar: where you are, what the engine last said, and how fast the bridge answered. */
+export function StatusBar({ doc, zoom, sync }: { doc: DocumentState | null; zoom: number; sync?: SyncSample | null }) {
   const styles = useStyles();
   const page = doc ? `Page 1 of ${Math.max(1, doc.pageCount)}` : "Page 1 of 1";
+  const words = doc ? `${doc.wordCount ?? 0} words` : "";
+  const bridge = sync ? `last edit ${sync.roundTripMs.toFixed(1)} ms (${sync.engineMs.toFixed(1)} ms engine)` : "";
   return (
     <div className={styles.bar} role="status" aria-live="polite">
       <div className={styles.left}>
         <span>{page}</span>
+        <span>{words}</span>
         <span>{Math.round(zoom * 100)}%</span>
         <span>{doc?.dirty ? "Unsaved changes" : "Saved"}</span>
       </div>
-      <span className={styles.status}>{doc?.status ?? ""}</span>
+      <span className={styles.status}>{bridge || doc?.status || ""}</span>
     </div>
   );
 }

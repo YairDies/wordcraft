@@ -14,6 +14,8 @@
 //! * `engine_render_page` — rasterise one laid-out page to PNG, for the document canvas.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod sync;
+
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
@@ -88,6 +90,7 @@ fn engine_state(state: State<'_, AppState>) -> Result<Value, String> {
         "path": session.path.as_ref().map(|p| p.display().to_string()),
         "dirty": session.dirty,
         "pageCount": page_count,
+        "wordCount": session.doc.word_count(),
         "status": session.status,
     }))
 }
@@ -111,7 +114,15 @@ fn engine_render_page(state: State<'_, AppState>, index: usize, scale: f64, dark
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(AppState::new())
-        .invoke_handler(tauri::generate_handler![engine_catalog, engine_run, engine_state, engine_render_page])
+        .invoke_handler(tauri::generate_handler![
+            engine_catalog,
+            engine_run,
+            engine_state,
+            engine_render_page,
+            sync::sync_load,
+            sync::sync_apply,
+            sync::sync_snapshot
+        ])
         .run(tauri::generate_context!());
     if let Err(err) = app {
         eprintln!("wordcraft: the window could not start: {err}");

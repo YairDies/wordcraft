@@ -5,6 +5,7 @@ import type { CommandSpec, DocumentState } from "./bridge/engine";
 import { buildRibbon } from "./shell/ribbonModel";
 import { Ribbon } from "./shell/Ribbon";
 import { StatusBar } from "./shell/StatusBar";
+import type { SyncSample } from "./shell/StatusBar";
 import { TitleBar } from "./shell/TitleBar";
 import { matchesShortcut } from "./a11y/shortcuts";
 import { themes, type ThemeMode } from "./theme/themes";
@@ -47,7 +48,8 @@ export function App() {
   const catalogRef = useRef<CommandSpec[]>([]);
   catalogRef.current = catalog;
 
-  const editorApi = useRef<EditorApi>({ view: null, loadDocument: () => {}, focus: () => {} });
+  const editorApi = useRef<EditorApi>({ view: null, loadDocument: () => {}, focus: () => {}, resync: () => {} });
+  const [syncSample, setSyncSample] = useState<SyncSample | null>(null);
   const fileInput = useRef<HTMLInputElement | null>(null);
   const tabs = useMemo(() => buildRibbon(catalog), [catalog]);
 
@@ -110,6 +112,9 @@ export function App() {
         await runCommand(id);
         setError(null);
         await refresh();
+        // Any command that did not travel through the translator may have changed the canonical
+        // document, so the view is corrected from the engine's own projection.
+        editorApi.current.resync();
       } catch (problem) {
         setError(String(problem));
       }
@@ -176,9 +181,15 @@ export function App() {
           if (file) void openDocx(file);
         }}
       >
-        <DocxEditor apiRef={editorApi} />
+        <DocxEditor
+          apiRef={editorApi}
+          onSynced={setSyncSample}
+          onUnsupported={(reason) =>
+            setError(`That edit is not synchronised with the engine yet: ${reason}.`)
+          }
+        />
       </div>
-      <StatusBar doc={doc} zoom={zoom} />
+      <StatusBar doc={doc} zoom={zoom} sync={syncSample} />
     </FluentProvider>
   );
 }

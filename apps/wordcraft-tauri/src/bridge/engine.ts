@@ -18,6 +18,7 @@ export interface DocumentState {
   path: string | null;
   dirty: boolean;
   pageCount: number;
+  wordCount: number;
   status: string;
 }
 

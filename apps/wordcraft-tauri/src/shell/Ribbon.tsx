@@ -1,4 +1,4 @@
-import { Tab, TabList, Toolbar, Tooltip, makeStyles, tokens } from "@fluentui/react-components";
+import { Tab, TabList, Toolbar, makeStyles, tokens } from "@fluentui/react-components";
 import type { CommandSpec } from "../bridge/engine";
 import type { RibbonTab } from "./ribbonModel";
 import { ariaShortcut, formatShortcut } from "../a11y/shortcuts";
@@ -15,10 +15,14 @@ const useStyles = makeStyles({
   panel: {
     display: "flex",
     flexWrap: "wrap",
-    alignItems: "stretch",
-    gap: "0px",
+    alignItems: "flex-start",
     padding: "4px 6px 2px",
     minHeight: "84px",
+    // The engine exposes 674 commands and the ribbon renders whichever the active tab owns.
+    // Until the curated Word ribbon lands, the panel scrolls instead of pushing the document
+    // off the window.
+    maxHeight: "190px",
+    overflowY: "auto",
   },
   group: {
     display: "flex",
@@ -45,7 +49,13 @@ interface RibbonProps {
   disabled: boolean;
 }
 
-/** Word's ribbon: a tab strip over one panel of command groups. */
+/**
+ * Word's ribbon: a tab strip over one panel of command groups.
+ *
+ * Buttons are plain elements with a native `title` rather than Fluent Tooltips: a Tooltip renders
+ * a portal per button, and with hundreds of ribbon commands those portals covered the document
+ * and intercepted every click aimed at the editor.
+ */
 export function Ribbon({ tabs, activeTab, onSelectTab, onRun, disabled }: RibbonProps) {
   const styles = useStyles();
   const active = tabs.find((tab) => tab.name === activeTab) ?? tabs[0];
@@ -71,18 +81,17 @@ export function Ribbon({ tabs, activeTab, onSelectTab, onRun, disabled }: Ribbon
           <div key={group.name} className={styles.group} role="group" aria-label={group.name}>
             <div className={styles.buttons}>
               {group.commands.map((command) => (
-                <Tooltip key={command.id} content={tooltipFor(command)} relationship="description">
-                  <button
-                    type="button"
-                    className="ribbon-button"
-                    onClick={() => onRun(command)}
-                    disabled={disabled}
-                    aria-keyshortcuts={command.shortcut ? ariaShortcut(command.shortcut) : undefined}
-                    title={tooltipFor(command)}
-                  >
-                    {command.label}
-                  </button>
-                </Tooltip>
+                <button
+                  key={command.id}
+                  type="button"
+                  className="ribbon-button"
+                  onClick={() => onRun(command)}
+                  disabled={disabled}
+                  aria-keyshortcuts={command.shortcut ? ariaShortcut(command.shortcut) : undefined}
+                  title={command.shortcut ? `${command.label} (${formatShortcut(command.shortcut)})` : command.label}
+                >
+                  {command.label}
+                </button>
               ))}
             </div>
             <span className={styles.groupLabel}>{group.name}</span>
@@ -91,8 +100,4 @@ export function Ribbon({ tabs, activeTab, onSelectTab, onRun, disabled }: Ribbon
       </Toolbar>
     </div>
   );
-}
-
-function tooltipFor(command: CommandSpec): string {
-  return command.shortcut ? `${command.label} (${formatShortcut(command.shortcut)})` : command.label;
 }

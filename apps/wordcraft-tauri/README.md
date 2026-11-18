@@ -42,6 +42,40 @@ Two importer details that cost real debugging time, recorded so nobody repeats i
   importer emits `tableRow`/`tableCell`. The schema keys cannot simply be renamed, because the
   specs reference each other by name. `normalize.ts` translates the names instead.
 
+## The editing bridge (engine owns the document)
+
+ProseMirror is a projection. Every edit becomes engine operations, the engine applies them to its
+own document, and the answer is a **delta**: only the blocks whose content changed.
+
+```
+key → ProseMirror transaction → translate.ts → ops → sync_apply (Rust) → delta → view
+```
+
+| Operation | Engine path |
+|---|---|
+| `InsertText` | `Selection::caret(Pos::body(block, byte))` then `text.insert` |
+| `DeleteRange` | selection then `text.delete` — which honours Track Changes |
+| `SetMark` | selection then `format.bold` / `format.italic` |
+
+Offsets cross a UTF-16 (JavaScript, ProseMirror) to UTF-8 (Rust `String`) boundary on every
+message; `sync.rs` converts both ways and refuses an offset that splits a surrogate pair.
+
+The view is updated optimistically and corrected from the engine when the burst ends, so typing
+never waits for the round trip. Edits the engine cannot express yet are **refused**, not applied
+locally: letting the view drift from the engine would make its authority a lie.
+
+### Measured (debug build, Windows, WebView2 157)
+
+| Metric | p50 | p95 |
+|---|---|---|
+| Engine apply (Rust) | 0.2 ms | 0.4 ms |
+| Keydown → view updated | 2.0 ms | 3.4 ms |
+| Transport floor (empty IPC call) | 3.7 ms | 5.8 ms |
+| Keydown → engine confirmation | 16.8 ms | 48.1 ms |
+
+The confirmation is the one number over a 16 ms frame: it is the async IPC answer, which competes
+with rendering for the next frame. It does not gate typing, because the view already moved.
+
 ## Running it
 
 ```powershell
