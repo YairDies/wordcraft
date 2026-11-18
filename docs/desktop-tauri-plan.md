@@ -109,7 +109,15 @@ sequence, rendered a tab's label twice, and its portal covered the window with p
 swallowing every click aimed at the document. The replacement is a mode (`null` | `root` | a tab
 id), one capture-phase listener, and a positioned span with `pointer-events: none` — no portal.
 
-`scripts/verify-ribbon.mjs` covers the eleven acceptance points and
+**Icons** come from @fluentui/react-icons — Fluent UI System Icons, MIT licensed, the same family
+Microsoft 365 uses. `Regular` is the resting state; `Filled` marks a command that is on, the Fluent
+2 convention and what Word does when Bold is active. Sizes follow the ribbon's proportions (32 px
+large, 20 px small) rather than scaling one glyph. Each icon is `aria-hidden`: the button's
+accessible name already describes the action. The Office *product* marks (the Word logo and its
+siblings) are covered by Microsoft's brand guidelines and are not MIT, so none are used.
+
+`scripts/verify-icons.mjs` covers the icons and `scripts/verify-ribbon.mjs` the eleven acceptance
+points, while
 `scripts/verify-keytips.mjs` the mode itself (hidden until Alt, Esc leaves, the document stays
 clickable while keytips are shown).
 

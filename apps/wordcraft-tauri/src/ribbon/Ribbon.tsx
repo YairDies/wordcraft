@@ -42,22 +42,24 @@ interface RibbonProps {
   onSelectTab: (tab: string) => void;
   onRun: (id: string) => void;
   shortcuts: ShortcutApi;
+  /** Commands currently on, so their icons can be filled. */
+  active: ReadonlySet<string>;
 }
 
 /**
  * Word's ribbon. First-level keytips sit on the tabs, second-level ones on the commands inside
  * them, both drawn by our own `Keytip` — no portal, no library attribute rewriting.
  */
-export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts }: RibbonProps) {
+export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts, active }: RibbonProps) {
   const styles = useStyles();
-  const active = RIBBON.find((tab) => tab.id === activeTab) ?? RIBBON[0];
+  const currentTab = RIBBON.find((tab) => tab.id === activeTab) ?? RIBBON[0];
 
   return (
     <div className={styles.ribbon}>
       <TabList
         className={styles.tabs}
         size="small"
-        selectedValue={active.id}
+        selectedValue={currentTab.id}
         onTabSelect={(_, data) => onSelectTab(String(data.value))}
         aria-label="Ribbon"
       >
@@ -70,8 +72,8 @@ export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts }: RibbonProps
           </Tab>
         ))}
       </TabList>
-      <Toolbar className={styles.panel} aria-label={`${shortcuts.labelFor(active.id)} commands`}>
-        {active.groups.map((group) => (
+      <Toolbar className={styles.panel} aria-label={`${shortcuts.labelFor(currentTab.id)} commands`}>
+        {currentTab.groups.map((group) => (
           <div key={group.id} className={styles.group} role="group" aria-label={group.label[shortcuts.locale]}>
             <div className={styles.groupItems}>
               {group.items.map((item) => (
@@ -79,8 +81,9 @@ export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts }: RibbonProps
                   key={`${group.id}:${item.id}:${item.size}`}
                   id={item.id}
                   size={item.size}
-                  tabId={active.id}
+                  tabId={currentTab.id}
                   shortcuts={shortcuts}
+                  active={active.has(item.id)}
                   onRun={onRun}
                 />
               ))}

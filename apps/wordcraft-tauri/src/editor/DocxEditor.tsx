@@ -16,6 +16,7 @@ import { blockRuns, runsToFragment, sameRuns } from "./runs";
 import { buildSeed, textblockCount } from "./seed";
 import { structureToDoc } from "./serialize";
 import { translateTransaction } from "./translate";
+import { activeCommands } from "./active";
 
 /** What the surrounding shell can do to the editor. Held in a ref so it never forces a render. */
 export interface EditorApi {
@@ -30,6 +31,8 @@ interface DocxEditorProps {
   apiRef: { current: EditorApi };
   /** Resolves a command id to the accelerator in force for the current language and preferences. */
   resolveShortcut: (id: string) => string;
+  /** Reports which formatting commands are on at the caret, for the ribbon's filled icons. */
+  onActiveChange?: (active: string[]) => void;
   onUnsupported?: (reason: string) => void;
   onSynced?: (sample: { roundTripMs: number; engineMs: number; ops: number }) => void;
 }
@@ -93,7 +96,7 @@ const syncDisabled = (): boolean => typeof window !== "undefined" && window.__wc
  * paragraphs becomes a `DeleteRange` that the engine turns into a join. Nothing re-seeds the
  * document, so the engine keeps its undo and the view is never rebuilt underneath the typing.
  */
-export function DocxEditor({ apiRef, resolveShortcut, onUnsupported, onSynced }: DocxEditorProps) {
+export function DocxEditor({ apiRef, resolveShortcut, onActiveChange, onUnsupported, onSynced }: DocxEditorProps) {
   const [mount, setMount] = useState<HTMLElement | null>(null);
   const plugins = useMemo(() => buildPlugins(resolveShortcut), [resolveShortcut]);
   const pending = useRef<SyncOp[]>([]);
@@ -362,15 +365,28 @@ export function DocxEditor({ apiRef, resolveShortcut, onUnsupported, onSynced }:
   return (
     <ProseMirror mount={mount} defaultState={initialState} dispatchTransaction={dispatchTransaction} attributes={editorAttributes}>
       <div ref={setMount} className="wc-sheet" />
-      <ViewBridge apiRef={apiRef} />
+      <ViewBridge apiRef={apiRef} onActiveChange={onActiveChange} />
     </ProseMirror>
   );
 }
 
-/** Keeps the shell's copy of the EditorView current without triggering a render loop. */
-function ViewBridge({ apiRef }: { apiRef: { current: EditorApi } }) {
+/**
+ * Keeps the shell's copy of the EditorView current, and reports the active formatting.
+ *
+ * The report is only sent when it actually differs: `useEditorEffect` runs after every editor
+ * update, so notifying unconditionally made the parent re-render, which updated the editor, which
+ * notified again — React error #185, an infinite update loop.
+ */
+function ViewBridge({ apiRef, onActiveChange }: { apiRef: { current: EditorApi }; onActiveChange?: (active: string[]) => void }) {
+  const lastReported = useRef<string>("");
   useEditorEffect((view) => {
     apiRef.current.view = view;
+    if (!view || !onActiveChange) return;
+    const active = activeCommands(view.state);
+    const signature = [...active].sort().join(",");
+    if (signature === lastReported.current) return;
+    lastReported.current = signature;
+    onActiveChange(active);
   });
   return null;
 }

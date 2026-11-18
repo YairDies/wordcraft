@@ -52,6 +52,8 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [shortcutDialog, setShortcutDialog] = useState(false);
   const [syncSample, setSyncSample] = useState<SyncSample | null>(null);
+  const [activeCommands, setActiveCommands] = useState<string[]>([]);
+  const activeSet = useMemo(() => new Set(activeCommands), [activeCommands]);
 
   const shortcuts = useShortcuts(locale);
   const catalogRef = useRef<CommandSpec[]>([]);
@@ -182,7 +184,7 @@ export function App() {
         onOpen={() => fileInput.current?.click()}
         onOpenShortcuts={() => setShortcutDialog(true)}
       />
-      <Ribbon activeTab={tab} onSelectTab={setTab} onRun={run} shortcuts={shortcuts} />
+      <Ribbon activeTab={tab} onSelectTab={setTab} onRun={run} shortcuts={shortcuts} active={activeSet} />
       <input
         ref={fileInput}
         type="file"
@@ -224,6 +226,7 @@ export function App() {
         <DocxEditor
           apiRef={editorApi}
           resolveShortcut={shortcuts.shortcutFor}
+          onActiveChange={setActiveCommands}
           onSynced={setSyncSample}
           onUnsupported={(reason) => setError(`That edit is not synchronised with the engine yet: ${reason}.`)}
         />
