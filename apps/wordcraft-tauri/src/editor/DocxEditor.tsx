@@ -56,8 +56,13 @@ const editorAttributes: Record<string, string> = {
 declare global {
   interface Window {
     __wcSyncSamples?: { roundTripMs: number; engineMs: number; ops: number }[];
+    /** Diagnostic switch: when true the editor talks to nothing, so the view can be observed alone. */
+    __wcDisableSync?: boolean;
   }
 }
+
+/** Diagnostic only: disconnects the editor from the engine so the view can be checked on its own. */
+const syncDisabled = (): boolean => typeof window !== "undefined" && window.__wcDisableSync === true;
 
 /**
  * The editing surface.
@@ -244,7 +249,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         view.updateState(view.state.apply(tr));
         return;
       }
-      if (!isTauri()) {
+      if (!isTauri() || syncDisabled()) {
         view.updateState(view.state.apply(tr));
         return;
       }
