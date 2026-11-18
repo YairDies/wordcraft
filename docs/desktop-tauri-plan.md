@@ -86,6 +86,39 @@ stack, and the view is corrected from the result — it holds no history of its 
 after a list and after a table, chained undos, and a final check that engine and view hold the same
 text.
 
+## Open debt: the in-flight window (Option B, explicitly parked)
+
+Three cycles were spent on one bug: text typed while a structural operation is in flight can be
+lost. It is not closed, and this is the honest record of it.
+
+**What works.** Import (11 blocks, 3 headings, 2 lists, 1 table; 26 paragraphs and 9 nested cells
+in the engine). Tables and their cell text are engine-owned. Lists are engine paragraphs carrying
+numbering. Typing, marks and deletions go through the engine's cursor. Undo and redo run in Rust
+and the view agrees with the engine after them. Perceived typing latency is ~2 ms; the engine
+applies in ~0.15 ms.
+
+**What does not.** Four acceptance checks fail — `paragraphsSplit`, `paragraphsJoined`,
+`listItemsInEngine`, `engineHoldsEverything` — all because the first character typed after Enter
+is lost. `scripts/verify-history.mjs` adds two independent failures: Backspace at a paragraph start
+does not join (3a), and undo after creating a list does not restore the engine's text (4b).
+
+**What was tried.** A deferred queue; a timed reconcile; a rebase of local transactions over the
+engine's document; replaying the deferred edits as position-free commands (this duplicated text and
+left an empty paragraph, so it was reverted); and sequence numbers with `last_applied_seq` so the
+view replays only what the engine has not seen. The last one is the right model — it is what
+prosemirror-collab does — but the replay still re-sends a `CursorMove` computed against the old
+paths ("offset 12 splits a character at 15/0/0/0"), and re-translating the replayed steps turned
+out to lose more text, not less.
+
+**What a correct fix needs.** The queued edits must be re-translated against the new paths *before*
+they are re-sent, and the `CursorMove` they carry must be dropped rather than replayed — the engine's
+cursor after a structural operation is already where the person is typing. That is a change to
+`replayUnconfirmed` alone, but it needs a passing test to land safely, and two attempts at it made
+the document worse.
+
+**Why it is parked.** Three cycles of the same bug without a green result is the signal to stop and
+record, not to keep going. The rest of Phase 2 is functional and useful.
+
 ## Phase 2 — the engine owns the document (done, minimal set)
 
 Selected architecture: **the engine is authoritative**. ProseMirror is a projection that sends
