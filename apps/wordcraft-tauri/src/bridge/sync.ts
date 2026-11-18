@@ -19,12 +19,26 @@ export type SeedBlock =
   | { kind: "list"; ordered: boolean; items: string[] }
   | { kind: "table"; rows: string[][] };
 
+/**
+ * Engine operations. Text operations carry **no position**: the engine keeps the cursor between
+ * calls and acts where it is, as Word's document object does. Only the operations that move the
+ * cursor name a place, and those are issued when the person clicks or moves, not when they type.
+ */
 export type SyncOp =
-  | { op: "InsertText"; path: number[]; offset: number; text: string }
-  | { op: "DeleteRange"; from_path: number[]; from_offset: number; to_path: number[]; to_offset: number }
-  | { op: "SetMark"; path: number[]; from: number; to: number; mark: MarkName; on: boolean }
-  /** Enter: the engine splits the paragraph itself. */
-  | { op: "SplitBlock"; path: number[]; offset: number };
+  | { op: "CursorMove"; path: number[]; offset: number }
+  | { op: "SelectRange"; from_path: number[]; from_offset: number; to_path: number[]; to_offset: number }
+  | { op: "InsertText"; text: string }
+  | { op: "DeleteBack" }
+  | { op: "DeleteForward" }
+  | { op: "DeleteSelection" }
+  | { op: "SplitBlock" }
+  | { op: "SetMark"; mark: MarkName; on: boolean };
+
+/** Where the engine's cursor is: the only position that cannot go stale. */
+export interface EngineCursor {
+  path: number[];
+  offset: number;
+}
 
 export interface RunOut {
   text: string;
@@ -54,10 +68,11 @@ export type ProjectedBlock =
 export interface SyncDelta {
   blocks: BlockOut[];
   micros: number;
+  /** The engine's cursor after the batch. */
+  caret?: EngineCursor;
   /** Present when the edit was structural: the whole document, its block paths and the caret. */
   structure?: ProjectedBlock[];
   paths?: number[][];
-  caret?: { path: number[]; offset: number };
 }
 
 /** Seed the canonical document from the blocks the front end describes. */

@@ -7,7 +7,7 @@ import { baseKeymap, toggleMark } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
 import { tableEditing } from "prosemirror-tables";
 import { syncApply, syncLoad, syncSnapshot } from "../bridge/sync";
-import type { BlockOut, ProjectedBlock, SyncOp } from "../bridge/sync";
+import type { BlockOut, EngineCursor, ProjectedBlock, SyncOp } from "../bridge/sync";
 import { isTauri } from "../bridge/engine";
 import { wordcraftSchema } from "./schema";
 import { normalizeDocxJson } from "./normalize";
@@ -89,6 +89,8 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
   const enqueueRef = useRef<(ops: SyncOp[], structural: boolean) => void>(() => {});
   /** Engine path for each ProseMirror textblock ordinal, in document order. */
   const paths = useRef<number[][]>([]);
+  /** Where the engine says its cursor is. The only position that cannot go stale. */
+  const engineCursor = useRef<EngineCursor | null>(null);
 
   const [initialState] = useState(() =>
     EditorState.create({
@@ -148,6 +150,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       const doc = structureToDoc(structure);
       const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
       paths.current = newPaths;
+      engineCursor.current = caret ?? null;
       if (caret) {
         const ordinal = newPaths.findIndex((path) => pathKey(path) === pathKey(caret.path));
         const target = ordinal >= 0 ? blockAt(tr.doc, ordinal) : null;
@@ -200,7 +203,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       }
       if (!fresh.docChanged) continue;
       view.updateState(view.state.apply(fresh));
-      const { ops, structural: becameStructural, unsupported } = translateTransaction(fresh, paths.current);
+      const { ops, structural: becameStructural, unsupported } = translateTransaction(fresh, paths.current, engineCursor.current);
       if (unsupported) {
         onUnsupported?.(unsupported);
         continue;
@@ -223,6 +226,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     try {
       const delta = await syncApply(ops, structural);
       const roundTripMs = performance.now() - started;
+      if (delta.caret) engineCursor.current = delta.caret;
       onSynced?.({ roundTripMs, engineMs: delta.micros / 1000, ops: ops.length });
       window.__wcSyncSamples = window.__wcSyncSamples ?? [];
       window.__wcSyncSamples.push({ roundTripMs, engineMs: delta.micros / 1000, ops: ops.length });
@@ -277,7 +281,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         view.updateState(view.state.apply(tr));
         return;
       }
-      const { ops, structural, unsupported } = translateTransaction(tr, paths.current);
+      const { ops, structural, unsupported } = translateTransaction(tr, paths.current, engineCursor.current);
       if (unsupported) {
         // The engine is the authority: an edit it cannot express must not exist only in the view.
         onUnsupported?.(unsupported);
@@ -308,6 +312,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       tr.setMeta("engineSync", true);
       view.dispatch(tr);
       paths.current = [];
+      engineCursor.current = null;
       // The one place the front end seeds the engine: after this the engine owns the text.
       if (!isTauri() || syncDisabled()) return;
       const { blocks, problem } = buildSeed(view.state.doc);

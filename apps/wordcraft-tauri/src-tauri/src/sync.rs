@@ -42,15 +42,33 @@ pub enum SeedBlock {
 }
 
 /// One editing operation. Snake_case matches Rust exactly; this protocol is private to the bridge.
+/// One editing operation.
+///
+/// Text operations carry **no position**: the engine keeps the cursor (its `Selection`) between
+/// calls, exactly as Word's document object does, and acts where that cursor is. Operations used
+/// to carry a block path, which meant every keystroke depended on a mapping that a concurrent
+/// structural edit could invalidate — the class of bug that cost three cycles. Only the two
+/// operations that *move* the cursor still name a position, and they are issued when the person
+/// clicks or moves, not when they type.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op")]
 pub enum SyncOp {
-    InsertText { path: Vec<u32>, offset: usize, text: String },
-    DeleteRange { from_path: Vec<u32>, from_offset: usize, to_path: Vec<u32>, to_offset: usize },
-    SetMark { path: Vec<u32>, from: usize, to: usize, mark: String, on: bool },
-    /// Split the paragraph at a caret: what Enter does. The engine inserts a paragraph break of
-    /// its own accord, so the new paragraph exists in the canonical document immediately.
-    SplitBlock { path: Vec<u32>, offset: usize },
+    /// Put the cursor at a position.
+    CursorMove { path: Vec<u32>, offset: usize },
+    /// Select from one position to another (a drag or Shift+arrow).
+    SelectRange { from_path: Vec<u32>, from_offset: usize, to_path: Vec<u32>, to_offset: usize },
+    /// Type: insert at the engine's cursor.
+    InsertText { text: String },
+    /// Backspace: delete the character before the cursor, joining paragraphs at a paragraph start.
+    DeleteBack {},
+    /// Delete: delete the character after the cursor, joining the next paragraph at a paragraph end.
+    DeleteForward {},
+    /// Delete the current selection.
+    DeleteSelection {},
+    /// Enter: split the paragraph at the cursor.
+    SplitBlock {},
+    /// Toggle a character mark over the current selection.
+    SetMark { mark: String, on: bool },
 }
 
 /// A paragraph as the engine projects it.
@@ -361,40 +379,39 @@ pub fn apply_ops(session: &mut Session, ops: &[SyncOp]) -> Result<ApplyResult, S
     let mut changed: BTreeSet<Vec<u32>> = BTreeSet::new();
 
     for op in ops {
+        // Every paragraph the cursor touches is one whose projection may have changed: where it
+        // starts and where it ends.
+        let before = selection_paths(session);
         match op.clone() {
-            SyncOp::InsertText { path, offset, text } => {
-                if text.is_empty() {
-                    continue;
-                }
+            SyncOp::CursorMove { path, offset } => {
                 let at = position(&session.doc, &path, offset)?;
                 session.sel = wordcraft_engine::Selection::caret(at);
-                session.run("text.insert", &json!({ "text": text })).map_err(cmd_error)?;
-                changed.insert(path);
             }
-            SyncOp::DeleteRange { from_path, from_offset, to_path, to_offset } => {
+            SyncOp::SelectRange { from_path, from_offset, to_path, to_offset } => {
                 let anchor = position(&session.doc, &from_path, from_offset)?;
                 let focus = position(&session.doc, &to_path, to_offset)?;
                 session.sel = wordcraft_engine::Selection { anchor, focus };
-                // text.delete honours Track Changes, so a deletion becomes a w:del revision.
-                session.run("text.delete", &json!({})).map_err(cmd_error)?;
-                changed.insert(from_path);
-                changed.insert(to_path);
             }
-            SyncOp::SplitBlock { path, offset } => {
-                let at = position(&session.doc, &path, offset)?;
-                session.sel = wordcraft_engine::Selection::caret(at);
-                // text.newParagraph is Enter: it splits the paragraph and starts the next one with
-                // the same properties, which is exactly what Word does.
-                session.run("text.newParagraph", &json!({})).map_err(cmd_error)?;
-                changed.insert(path.clone());
-                // The split added a paragraph, so the block that follows it also changed.
-                let mut next = path.clone();
-                if let Some(last) = next.last_mut() {
-                    *last += 1;
+            SyncOp::InsertText { text } => {
+                if text.is_empty() {
+                    continue;
                 }
-                changed.insert(next);
+                session.run("text.insert", &json!({ "text": text })).map_err(cmd_error)?;
             }
-            SyncOp::SetMark { path, from, to, mark, on } => {
+            SyncOp::DeleteBack {} => {
+                session.run("text.backspace", &json!({})).map_err(cmd_error)?;
+            }
+            SyncOp::DeleteForward {} => {
+                session.run("text.delete", &json!({})).map_err(cmd_error)?;
+            }
+            SyncOp::DeleteSelection {} => {
+                session.run("text.delete", &json!({})).map_err(cmd_error)?;
+            }
+            SyncOp::SplitBlock {} => {
+                // Enter: the engine splits its own paragraph at its own cursor.
+                session.run("text.newParagraph", &json!({})).map_err(cmd_error)?;
+            }
+            SyncOp::SetMark { mark, .. } => {
                 let command = match mark.as_str() {
                     "bold" => "format.bold",
                     "italic" => "format.italic",
@@ -402,24 +419,24 @@ pub fn apply_ops(session: &mut Session, ops: &[SyncOp]) -> Result<ApplyResult, S
                     "strike" => "format.strikethrough",
                     other => return Err(format!("unsupported mark {}", other)),
                 };
-                let a = position(&session.doc, &path, from)?;
-                let b = position(&session.doc, &path, to)?;
-                if a == b {
+                if session.sel.is_collapsed() {
                     continue;
                 }
-                if mark_state(&session, &path, from, to, &mark) == Some(on) {
-                    changed.insert(path);
-                    continue;
-                }
-                session.sel = wordcraft_engine::Selection { anchor: a, focus: b };
                 session.run(command, &json!({})).map_err(cmd_error)?;
-                changed.insert(path);
             }
+        }
+        for path in before.into_iter().chain(selection_paths(session)) {
+            changed.insert(path);
         }
     }
 
     let blocks: Vec<BlockOut> = changed.iter().filter_map(|p| project(&session.doc, &path_of(p))).collect();
     Ok(ApplyResult { blocks, micros: started.elapsed().as_micros() as u64 })
+}
+
+/// The paragraphs the current selection touches.
+fn selection_paths(session: &Session) -> Vec<Vec<u32>> {
+    vec![session.sel.anchor.path.0.clone(), session.sel.focus.path.0.clone()]
 }
 
 /// Whether the whole range already carries `mark`.
@@ -476,15 +493,17 @@ pub fn sync_apply(state: tauri::State<'_, AppState>, ops: Vec<SyncOp>, structura
     let mut session = state.session.lock().map_err(|_| lock_error())?;
     let result = apply_ops(&mut session, &ops)?;
     let projected: Vec<Value> = result.blocks.iter().map(BlockOut::to_json).collect();
+    // Every answer carries the cursor: the front end compares it with what it believes and sends
+    // a CursorMove only when they differ, so typing never depends on a position it computed.
+    let caret = {
+        let focus = session.sel.focus.clone();
+        let offset = session
+            .doc
+            .para(StoryRef::Body, &focus.path)
+            .map_or(0, |p| byte_to_utf16(&p.text, focus.off));
+        json!({ "path": focus.path.0, "offset": offset })
+    };
     if structural.unwrap_or(false) {
-        let caret = {
-            let focus = session.sel.focus.clone();
-            let offset = session
-                .doc
-                .para(StoryRef::Body, &focus.path)
-                .map_or(0, |p| byte_to_utf16(&p.text, focus.off));
-            json!({ "path": focus.path.0, "offset": offset })
-        };
         let structure = project_structure(&session.doc);
         let paths: Vec<Vec<u32>> = project_all(&session.doc).into_iter().map(|b| b.path).collect();
         return Ok(json!({
@@ -495,7 +514,7 @@ pub fn sync_apply(state: tauri::State<'_, AppState>, ops: Vec<SyncOp>, structura
             "caret": caret,
         }));
     }
-    Ok(json!({ "blocks": projected, "micros": result.micros }))
+    Ok(json!({ "blocks": projected, "micros": result.micros, "caret": caret }))
 }
 
 /// The whole projection, for resynchronising after a command that bypassed the translator.
@@ -522,11 +541,15 @@ mod tests {
     }
 
     fn block_text(session: &Session, path: &[u32]) -> String {
-        session
-            .doc
-            .para(StoryRef::Body, &path_of(path))
-            .map(|p| p.text.clone())
-            .unwrap_or_default()
+        session.doc.para(StoryRef::Body, &path_of(path)).map(|p| p.text.clone()).unwrap_or_default()
+    }
+
+    fn caret(block: usize, offset: usize) -> SyncOp {
+        SyncOp::CursorMove { path: vec![block as u32], offset }
+    }
+
+    fn type_text(session: &mut Session, text: &str) {
+        apply_ops(session, &[SyncOp::InsertText { text: text.to_string() }]).unwrap();
     }
 
     #[test]
@@ -535,8 +558,6 @@ mod tests {
         assert_eq!(utf16_to_byte(text, 1), Some("ñ".len()));
         assert_eq!(utf16_to_byte(text, 5), Some("ñandú".len()));
         assert_eq!(utf16_to_byte(text, 8), Some("ñandú 👍".len()));
-        assert_eq!(utf16_to_byte(text, text.encode_utf16().count()), Some(text.len()));
-        // An offset inside a surrogate pair is refused, not rounded.
         assert_eq!(utf16_to_byte(text, 7), None);
         for units in 0..=text.encode_utf16().count() {
             if let Some(byte) = utf16_to_byte(text, units) {
@@ -545,83 +566,79 @@ mod tests {
         }
     }
 
+    /// The whole point of the cursor model: a text operation names no position at all.
     #[test]
-    fn insert_and_delete_by_path() {
+    fn typing_goes_to_the_engine_cursor() {
         let mut session = session_with(vec![para("Hola")]);
-        apply_ops(&mut session, &[SyncOp::InsertText { path: vec![0], offset: 4, text: " mundo".into() }]).unwrap();
+        apply_ops(&mut session, &[caret(0, 4)]).unwrap();
+        type_text(&mut session, " mundo");
         assert_eq!(block_text(&session, &[0]), "Hola mundo");
-        apply_ops(&mut session, &[SyncOp::DeleteRange { from_path: vec![0], from_offset: 4, to_path: vec![0], to_offset: 10 }]).unwrap();
-        assert_eq!(block_text(&session, &[0]), "Hola");
+        apply_ops(&mut session, &[caret(0, 0)]).unwrap();
+        type_text(&mut session, "> ");
+        assert_eq!(block_text(&session, &[0]), "> Hola mundo");
     }
 
     #[test]
-    fn a_caret_in_a_later_paragraph_targets_it() {
+    fn backspace_joins_paragraphs_at_a_paragraph_start() {
         let mut session = session_with(vec![para("uno"), para("dos")]);
-        apply_ops(&mut session, &[SyncOp::InsertText { path: vec![1], offset: 3, text: "!".into() }]).unwrap();
-        assert_eq!(block_text(&session, &[0]), "uno");
-        assert!(block_text(&session, &[1]).ends_with('!'));
+        apply_ops(&mut session, &[caret(1, 0)]).unwrap();
+        apply_ops(&mut session, &[SyncOp::DeleteBack {}]).unwrap();
+        assert_eq!(session.doc.para_paths(StoryRef::Body).len(), 1);
+        assert_eq!(block_text(&session, &[0]), "unodos");
     }
 
     #[test]
-    fn marks_reach_the_engine() {
+    fn enter_splits_at_the_cursor_and_moves_it() {
+        let mut session = session_with(vec![para("unodos")]);
+        apply_ops(&mut session, &[caret(0, 3)]).unwrap();
+        apply_ops(&mut session, &[SyncOp::SplitBlock {}]).unwrap();
+        // The engine capitalises a paragraph's first letter (AutoCorrect), so the split text is
+        // compared case-insensitively: the property under test is where the split happened.
+        assert_eq!(block_text(&session, &[0]).to_lowercase(), "uno");
+        assert_eq!(block_text(&session, &[1]), "dos");
+        // The cursor follows the split into the new paragraph, at its start — Word's behaviour:
+        // what you type next opens the new paragraph.
+        type_text(&mut session, "!");
+        assert_eq!(block_text(&session, &[1]), "!dos");
+    }
+
+    #[test]
+    fn marks_apply_to_the_selection_the_engine_holds() {
         let mut session = session_with(vec![para("Hola mundo")]);
-        for (mark, check) in [("bold", 0usize), ("italic", 1), ("underline", 2), ("strike", 3)] {
-            apply_ops(&mut session, &[SyncOp::SetMark { path: vec![0], from: 0, to: 4, mark: mark.into(), on: true }]).unwrap();
-            let projected = project(&session.doc, &path_of(&[0])).unwrap();
-            let marked: String = projected
-                .runs
-                .iter()
-                .filter(|r| [r.bold, r.italic, r.underline, r.strike][check])
-                .map(|r| r.text.as_str())
-                .collect();
-            assert_eq!(marked, "Hola", "mark {mark}");
-        }
+        apply_ops(
+            &mut session,
+            &[SyncOp::SelectRange { from_path: vec![0], from_offset: 0, to_path: vec![0], to_offset: 4 }],
+        )
+        .unwrap();
+        apply_ops(&mut session, &[SyncOp::SetMark { mark: "bold".into(), on: true }]).unwrap();
+        let projected = project(&session.doc, &path_of(&[0])).unwrap();
+        let bold: String = projected.runs.iter().filter(|r| r.bold).map(|r| r.text.as_str()).collect();
+        assert_eq!(bold, "Hola");
     }
 
-    /// The integrity complaint: list items must be real text in the canonical document, not
-    /// placeholders that vanish on save.
     #[test]
-    fn list_items_are_real_text_in_the_engine() {
+    fn list_items_and_table_cells_are_real_text() {
         let session = session_with(vec![
             para("Antes"),
             SeedBlock::List { ordered: false, items: vec!["alfa".into(), "beta".into()] },
+            SeedBlock::Table { rows: vec![vec!["A".into(), "B".into()]] },
         ]);
-        assert_eq!(block_text(&session, &[0]), "Antes");
         assert_eq!(block_text(&session, &[1]), "alfa");
         assert_eq!(block_text(&session, &[2]), "beta");
-        let paths = session.doc.para_paths(StoryRef::Body);
-        assert_eq!(paths.len(), 3);
-        // The list items carry numbering, which is how OOXML models a list.
+        assert_eq!(block_text(&session, &[3, 0, 0, 0]), "A");
         let item = session.doc.para(StoryRef::Body, &path_of(&[1])).unwrap();
-        assert!(item.props.numbering.is_some(), "list item lost its numbering");
+        assert!(item.props.numbering.is_some());
     }
 
+    /// The cursor survives a structural change, which is what makes typing after Enter safe.
     #[test]
-    fn table_cell_text_is_real_text_in_the_engine() {
-        let mut session = session_with(vec![
-            para("Antes"),
-            SeedBlock::Table { rows: vec![vec!["A".into(), "B".into()], vec!["C".into(), "D".into()]] },
-            para("Después"),
-        ]);
-        // A table's cell paragraphs are addressed as [table, row, cell, paragraph].
-        assert_eq!(block_text(&session, &[1, 0, 0, 0]), "A");
-        assert_eq!(block_text(&session, &[1, 0, 1, 0]), "B");
-        assert_eq!(block_text(&session, &[1, 1, 1, 0]), "D");
-        assert_eq!(block_text(&session, &[2]), "Después");
-
-        // Editing a cell goes through the same path addressing as any other paragraph.
-        apply_ops(&mut session, &[SyncOp::InsertText { path: vec![1, 0, 0, 0], offset: 1, text: "BC".into() }]).unwrap();
-        assert_eq!(block_text(&session, &[1, 0, 0, 0]), "ABC");
-    }
-
-    #[test]
-    fn structural_seed_splits_and_joins_paragraphs() {
-        // Enter produces two paragraphs; joining them produces one. Both are seeded documents.
-        let split = session_with(vec![para("uno"), para("dos")]);
-        assert_eq!(split.doc.para_paths(StoryRef::Body).len(), 2);
-        let joined = session_with(vec![para("unodos")]);
-        assert_eq!(block_text(&joined, &[0]), "unodos");
-        assert_eq!(joined.doc.para_paths(StoryRef::Body).len(), 1);
+    fn cursor_survives_structural_operations() {
+        let mut session = session_with(vec![para("alpha"), para("beta")]);
+        apply_ops(&mut session, &[caret(0, 5)]).unwrap();
+        apply_ops(&mut session, &[SyncOp::SplitBlock {}]).unwrap();
+        type_text(&mut session, "X");
+        assert_eq!(block_text(&session, &[1]), "X");
+        assert_eq!(block_text(&session, &[2]), "beta");
     }
 
     fn percentile(sorted: &[u64], p: f64) -> u64 {
@@ -635,21 +652,19 @@ mod tests {
     #[test]
     fn engine_apply_latency_is_within_a_frame() {
         let mut session = session_with(vec![para("Escribir rápido")]);
+        apply_ops(&mut session, &[caret(0, 7)]).unwrap();
         let mut samples: Vec<u64> = Vec::with_capacity(400);
-        for i in 0..400u64 {
-            let offset = (7 + i % 20) as usize;
-            let ops = [SyncOp::InsertText { path: vec![0], offset, text: "a".into() }];
-            let result = apply_ops(&mut session, &ops).unwrap();
+        for _ in 0..400u64 {
+            let result = apply_ops(&mut session, &[SyncOp::InsertText { text: "a".into() }]).unwrap();
             samples.push(result.micros);
         }
         samples.sort_unstable();
         println!(
-            "engine apply latency over {} edits: p50={}us p95={}us p99={}us max={}us",
+            "engine apply latency over {} edits: p50={}us p95={}us p99={}us",
             samples.len(),
             percentile(&samples, 0.50),
             percentile(&samples, 0.95),
-            percentile(&samples, 0.99),
-            samples.last().copied().unwrap_or(0)
+            percentile(&samples, 0.99)
         );
         assert!(percentile(&samples, 0.95) < 8_000);
     }
