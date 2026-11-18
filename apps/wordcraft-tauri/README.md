@@ -1,47 +1,46 @@
-# wordcraft-tauri — the Fluent UI desktop front end
+# wordcraft-tauri — Fluent UI chrome over a ProseMirror editing surface
 
 This directory is WordCraft's **Tauri 2 + React + Fluent UI React v9** front end. It replaces
-`crates/ui-egui` as the desktop shell; the document engine underneath is unchanged.
+`crates/ui-egui`, which this branch deletes.
 
-## Why the engine survives the swap
+## The split
 
-WordCraft was already built so the UI is a thin, swappable layer:
+| Concern | Owned by |
+|---|---|
+| Document model, layout, .docx reading/writing, PDF, proofing | the Rust crates (unchanged) |
+| Command vocabulary, Word's shortcuts, ribbon locations | `wordcraft-engine`'s `CommandSpec` registry |
+| Application chrome (title bar, ribbon, status bar, themes) | React + Fluent UI React v9 |
+| The editing surface (caret, selection, typing, IME, screen-reader text) | ProseMirror |
 
-- `crates/ui-egui/Cargo.toml` describes itself as *"swappable: nothing below depends on it"*.
-- `crates/engine` has **no** egui, eframe, winit or rfd dependency.
-- **Everything is a command**: each user-visible action is a `CommandSpec` (id, label, ribbon
-  location, default shortcut, params) executed by `Session::run`.
+The editing surface is a **DOM contenteditable**, not a rasterised canvas. That is a deliberate
+accessibility decision: a canvas paints pixels that no screen reader can read, while
+`contenteditable` exposes every word to NVDA, Narrator and VoiceOver and keeps the browser's
+native caret, selection and IME. Layout fidelity to Word is traded for usable, accessible text.
 
-So this shell owns no document behaviour. It asks the engine for its command catalog and renders
-it. Word's shortcuts therefore live in exactly one place — the Rust registry — and the React side
-can never drift from them.
-
-## What each bridge command does
+## Bridge commands
 
 | Command | Purpose |
 |---|---|
-| `engine_catalog` | Every command: id, label, ribbon location, shortcut, params. Builds the ribbon **and** the keyboard map. |
-| `engine_run` | Run one command by id (`format.bold`, `insert.table`, …). |
-| `engine_state` | Title, path, dirty flag, page count, engine status — for the chrome. |
-| `engine_render_page` | One laid-out page rasterised by `wordcraft-render` to a base64 PNG. |
+| `engine_catalog` | Every command: id, label, ribbon location, shortcut, params. Builds the ribbon **and** the keyboard map, so Word's shortcuts are never re-typed in TypeScript. |
+| `engine_run` | Run one command by id. |
+| `engine_state` | Title, path, dirty flag, page count, status. |
+| `engine_render_page` | A page rasterised by `wordcraft-render`. Not used by the editing surface; kept for print preview and thumbnails. |
 
-The canvas shows the engine's own typesetting rather than a browser re-implementation of it, so
-layout parity with the .docx format is not re-litigated in TypeScript.
+## .docx import
 
-## Layout
+`@docen/import-docx` (`parseDOCX`) converts a .docx into TipTap/ProseMirror JSON in the browser.
+`src/editor/normalize.ts` then rewrites that JSON against our schema: unknown node types and
+attributes are dropped **deliberately and reported**, rather than throwing. ProseMirror raises on
+the first invalid attribute, and "open a document" must never become "lose a document".
 
-```
-apps/wordcraft-tauri/
-├── index.html, vite.config.ts, tsconfig.json   # front end build
-├── src/                                        # React + Fluent UI v9
-│   ├── bridge/engine.ts                        # typed invoke() wrappers
-│   ├── a11y/shortcuts.ts                       # Mod+B ⇄ Ctrl+B, aria-keyshortcuts
-│   ├── theme/themes.ts                         # light / dark / high contrast
-│   ├── shell/                                  # TitleBar, Ribbon, Canvas, StatusBar
-│   └── App.tsx
-└── src-tauri/                                  # the Rust host (workspace member)
-    └── src/lib.rs                              # the four commands above
-```
+Two importer details that cost real debugging time, recorded so nobody repeats it:
+
+- `parseDOCX` only recognises a list when the paragraph carries **both** `w:ilvl` and `w:numId`.
+  A .docx whose lists come from a *style* (as python-docx writes them) carries only `w:numId`
+  there, and the list silently degrades to plain paragraphs.
+- Tables come from `prosemirror-tables`, whose nodes are named `table_row`/`table_cell`; the
+  importer emits `tableRow`/`tableCell`. The schema keys cannot simply be renamed, because the
+  specs reference each other by name. `normalize.ts` translates the names instead.
 
 ## Running it
 
@@ -54,17 +53,32 @@ pnpm app:build    # release bundle
 
 `pnpm dev` alone serves the UI in a browser; the engine bridge is absent there and the app says so.
 
+## Verifying it
+
+```powershell
+pnpm exec esbuild scripts/verify-docx-import.ts --bundle --platform=node --format=esm --outfile=.verify.mjs
+node .verify.mjs samples/welcome.docx     # parseDOCX -> normalize -> schema, no browser
+
+pnpm preview --port 4173                  # in another shell
+node scripts/verify-a11y.mjs http://localhost:4173
+```
+
+`verify-a11y.mjs` drives the installed Chrome through Playwright and asserts what a screen reader
+actually consumes: the editable element is `role=textbox`, `aria-multiline`, named "Document
+text"; the document's heading appears in the accessibility tree; typing reaches both the DOM and
+the accessibility tree; and `Ctrl+B` at a collapsed caret formats the text typed next. It also
+writes `verify-screenshot.png`.
+
 ## Accessibility
 
-- The ribbon is a Fluent `TabList` (arrow-key navigation) over `role="group"` command groups.
-- Command buttons carry `aria-keyshortcuts` in DOM form and a tooltip in platform form.
-- A skip link jumps past the chrome to the document.
-- The status bar is `role="status" aria-live="polite"`.
-- Shortcuts come from the engine, so they match Word: `Mod+B`, `Mod+I`, `Mod+U`, `Mod+S`,
-  `Mod+Z`/`Mod+Y`, `F7` (spelling), and the rest of the registry.
+- Ribbon: Fluent `TabList` (arrow-key navigation) over `role="group"` command groups.
+- Commands carry `aria-keyshortcuts` in DOM form and a tooltip in platform form.
+- Skip link past the chrome to the document.
+- Status bar is `role="status" aria-live="polite"`.
+- Themes: light, dark, high contrast — Fluent 2 themes generated from one brand ramp.
 
 ## Note on the upstream rule
 
 The upstream repository's house rules require "Rust only — no handwritten JavaScript or
-TypeScript" in native Craft apps. This branch deliberately departs from that rule, which is the
-whole point of the fork. It is not proposed upstream.
+TypeScript" in native Craft apps. This branch departs from that deliberately; it is the reason for
+the fork, and it is not proposed upstream.

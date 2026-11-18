@@ -3,3 +3,6 @@ dist/
 .vite/
 src-tauri/target/
 src-tauri/gen/schemas/
+.verify.mjs
+.dump.mjs
+verify-screenshot*.png

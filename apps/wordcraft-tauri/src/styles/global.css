@@ -11,8 +11,7 @@ body {
   overflow: hidden;
 }
 
-/* The ribbon's command buttons: Word's dense, flat look, on the native button element so the
-   keyboard, screen readers and `:focus-visible` all behave without extra work. */
+/* ---------- Ribbon commands ---------- */
 .ribbon-button {
   font: inherit;
   font-size: 12px;
@@ -41,7 +40,6 @@ body {
   cursor: default;
 }
 
-/* Screen-reader users can jump past the ribbon and land in the document. */
 .skip-link {
   position: absolute;
   left: -9999px;
@@ -56,4 +54,106 @@ body {
 
 .skip-link:focus {
   left: 8px;
+}
+
+/* ---------- The document sheet ---------- */
+.wc-sheet {
+  background: #ffffff;
+  color: #1a1a1a;
+  width: 8.5in;
+  max-width: 100%;
+  min-height: 11in;
+  padding: 1in;
+  box-sizing: border-box;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.18);
+}
+
+/* The element ProseMirror makes editable (attributes come from editorProps). */
+.wc-prose {
+  outline: none;
+  min-height: 9in;
+  font-size: 11pt;
+  line-height: 1.5;
+  color: inherit;
+  caret-color: #1a1a1a;
+}
+
+/* A focus indicator that hugs the page instead of framing the whole viewport. */
+.wc-prose:focus-visible {
+  outline: 2px solid #0f6cbd;
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.wc-prose p {
+  margin: 0 0 8pt;
+}
+
+.wc-prose h1,
+.wc-prose h2,
+.wc-prose h3,
+.wc-prose h4,
+.wc-prose h5,
+.wc-prose h6 {
+  margin: 12pt 0 6pt;
+  line-height: 1.25;
+}
+
+.wc-prose h1 { font-size: 20pt; }
+.wc-prose h2 { font-size: 16pt; }
+.wc-prose h3 { font-size: 13pt; }
+
+.wc-prose ul,
+.wc-prose ol {
+  margin: 0 0 8pt;
+  padding-left: 24pt;
+}
+
+.wc-prose blockquote {
+  margin: 0 0 8pt;
+  padding-left: 12pt;
+  border-left: 3px solid #d0d0d0;
+  color: #444;
+}
+
+.wc-prose pre {
+  background: #f5f5f5;
+  padding: 8pt;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-family: Consolas, "Cascadia Mono", monospace;
+}
+
+.wc-prose table {
+  border-collapse: collapse;
+  margin: 0 0 8pt;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.wc-prose td,
+.wc-prose th {
+  border: 1px solid #bfbfbf;
+  padding: 4pt 6pt;
+  vertical-align: top;
+}
+
+.wc-prose th {
+  background: #f0f0f0;
+  font-weight: 600;
+}
+
+.wc-prose img {
+  max-width: 100%;
+  height: auto;
+}
+
+.wc-prose hr {
+  border: none;
+  border-top: 1px solid #bfbfbf;
+  margin: 12pt 0;
+}
+
+.wc-prose li[data-checked] {
+  list-style: none;
 }

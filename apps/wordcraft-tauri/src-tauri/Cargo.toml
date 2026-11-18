@@ -3,6 +3,10 @@ name = "wordcraft-tauri"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+# Inherited so the workspace keeps declaring them; the egui apps that used to were removed.
+rust-version.workspace = true
+repository.workspace = true
+publish = false
 description = "WordCraft desktop shell: a Tauri 2 host that bridges wordcraft-engine to the Fluent UI React front end"
 
 [lints]

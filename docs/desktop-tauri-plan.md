@@ -1,62 +1,81 @@
-# Desktop migration: egui → Tauri 2 + Fluent UI React v9
+# Desktop migration: egui → Tauri 2 + Fluent UI React v9 + ProseMirror
 
-Status: **branch `feat/tauri-fluent-ui`, skeleton in place.**
+Status: **branch `feat/tauri-fluent-ui`. Phase 0 and Phase 1 landed.**
 
-## Starting point
+## The decision
 
-| Layer | Crate | Kept? |
+The Rust engine is kept: it is the source of truth for the document model, layout, .docx I/O,
+PDF, proofing and the command vocabulary. Only the presentation layers are replaced.
+
+`crates/ui-egui` (98.7k lines) is **deleted**, together with the egui-hosted binaries
+`apps/wordcraft` and `apps/wordcraft-web`, which cannot build without it. Git history on
+`master` keeps them.
+
+The editing surface is **ProseMirror** (a DOM contenteditable), not a rasterised page canvas:
+accessibility outranks layout fidelity at this stage. A canvas is invisible to screen readers; a
+contenteditable exposes the text natively.
+
+## Layers
+
+| Layer | Crate | State |
 |---|---|---|
-| L0 | `geom` | yes |
-| L1 | `doc`, `fonts` | yes |
-| L2 | `layout`, `docx`, `formats` | yes |
-| L3 | `render`, `pdf` | yes |
-| L4 | `engine` (Session, undo, command registry, Word catalog) | yes |
-| L5 | `mcp` | yes |
-| L6 | `ui-egui` (98.7k lines, egui) | **replaced** by `apps/wordcraft-tauri` |
-| apps | `apps/wordcraft` (egui window host) | **replaced** by the Tauri host |
+| L0 | `geom` | unchanged |
+| L1 | `doc`, `fonts` | unchanged |
+| L2 | `layout`, `docx`, `formats` | unchanged |
+| L3 | `render`, `pdf` | unchanged (render now feeds print preview, not the editor) |
+| L4 | `engine` | unchanged — Session, undo, command registry, Word catalog |
+| L5 | `mcp`, `zotero` | unchanged |
+| L6 | ~~`ui-egui`~~ | **deleted**; replaced by `apps/wordcraft-tauri` (Tauri host + React/Fluent/ProseMirror) |
+| apps | `wordcraft-cli` | unchanged; `wordcraft` and `wordcraft-web` removed with the egui shell |
 
-The engine is front-end agnostic by design, so the swap is at L6 and above only. Nothing below L6
-changes, and `cargo xtask layers` still holds because the new shell sits above the boundary.
+`cargo xtask layers` registers `wordcraft-tauri` as an exempt application crate.
 
-## Phases
+## Phase 0 — skeleton (done)
 
-**Phase 0 — skeleton (done).**
-Workspace membership, Tauri 2 host, four bridge commands, Fluent UI shell with ribbon, title bar,
-canvas, status bar and three themes. Keyboard map generated from the engine registry.
+Tauri 2 host, four bridge commands, Fluent shell with ribbon, title bar, status bar and three
+themes. Keyboard map generated from the engine registry.
 
-**Phase 1 — the document surface.**
-- Caret, selection and hit-testing over the rendered page images. The engine already exposes hit
-  testing through `layout`; the bridge needs `engine_hit_test` / `engine_set_selection`.
-- Typing: a hidden `contenteditable` or a key listener that forwards to `text.insert`, matching
-  `docs/typing-parity.md`. IME composition must go through the engine's IME state machine.
-- Page images must be cached and invalidated per page, not re-rendered wholesale on every edit.
+## Phase 1 — accessible editor (done)
 
-**Phase 2 — Word chrome parity.**
-- Full ribbon: large/small buttons, galleries (Styles, font list), split buttons, drop-downs,
-  the File backstage, the Quick Access Toolbar, KeyTips (Alt sequences).
-- Dialogs: Font, Paragraph, Page Setup, Find & Replace.
-- Navigation pane, rulers, status-bar view buttons, zoom slider.
+1. `ui-egui` and its dependent apps deleted; workspace, xtask layers and CI adjusted.
+2. Fluent UI v9 chrome; ProseMirror editing surface mounted with `@nytimes/react-prosemirror`.
+3. Schema matching `@docen/import-docx` output, with a normalizer that drops unknown
+   nodes/attributes deliberately instead of throwing.
+4. `.docx` import through `@docen/import-docx`, drag-and-drop and File ▸ Open, verified on a
+   sample document and by a headless Node run of the whole chain.
+5. Accessibility verified against Chrome's accessibility tree (the data NVDA/Narrator consume):
+   `role=textbox`, `aria-multiline`, document text in the AX tree, typing reaching both the DOM
+   and the AX tree, `Ctrl+B` formatting the text typed at the caret.
 
-**Phase 3 — platform integration.**
-- File dialogs (drag & drop, recent files, Save As), printing, clipboard formats
-  (`clipboard_html` / `clipboard_rtf` already exist on `Session`).
-- Multi-window, autosave and crash recovery (`recovery.rs` is already engine-side).
-- Packaging: MSI/NSIS, .dmg, AppImage/deb, plus the existing Flatpak work.
+## Next: Phase 2 — the engine becomes the model again
 
-**Phase 4 — parity gates.**
-- Port `docs/ui-parity.md` checks to the new shell; keep `cargo xtask parity` green by driving it
-  through the CLI/control channel rather than the egui harness.
+ProseMirror is currently the editing surface *and* the document of record; the Rust engine is only
+consulted for its command catalog. The two must be joined:
 
-## Accessibility requirements (non-negotiable)
+- A document sync layer: ProseMirror transactions map onto engine commands (`text.insert`,
+  `format.bold`, `insert.table`…) so undo, tracked changes, proofing and .docx export run on the
+  engine's model. This is the load-bearing piece; everything else depends on it.
+- Open/save through `wordcraft-docx` rather than only `@docen/import-docx`, so what we write back
+  is a real .docx with Word's fidelity.
+- Selection and formatting state reflected in the ribbon (bold button pressed when the caret is in
+  bold text), driven by `engine_state`.
 
-- Every ribbon control reachable and operable by keyboard alone, with a visible focus ring.
-- Shortcuts identical to Word's, sourced from `CommandSpec::shortcut` — one source of truth.
-- KeyTips (Alt → letter sequences) mirroring Word's ribbon access keys.
-- Announcements for selection, formatting state and status via ARIA live regions.
-- Theme support: light, dark and high contrast, honouring the OS setting.
+## Later phases
 
-## Known gaps in this skeleton
+**Phase 3 — Word chrome parity.** Full ribbon (large/small buttons, galleries, split buttons,
+File backstage, Quick Access Toolbar, Alt KeyTips), dialogs (Font, Paragraph, Page Setup, Find &
+Replace), navigation pane, rulers, zoom.
 
-- The typed character stream and IME are not wired yet; the canvas is read-only.
-- Word count is not shown: no engine command for it has been verified, so none was invented.
-- Icons are text labels for now; artwork must be original (see the repository's asset rules).
+**Phase 4 — platform.** File dialogs and recent files, printing, clipboard (`clipboard_html` /
+`clipboard_rtf` already exist on `Session`), multi-window, autosave and recovery, packaging
+(MSI/NSIS first).
+
+## Known gaps
+
+- The ribbon has not yet been visually verified in the Tauri window (it renders only when the
+  engine bridge answers; in a plain browser there is no catalog, by design).
+- Style-based lists: a .docx whose numbering lives only in a style degrades to paragraphs, because
+  the importer requires a direct `w:ilvl`/`w:numId`. Word writes the direct form, so real Word
+  documents are unaffected; python-docx output is.
+- Word count is not shown; no engine command for it has been verified, so none was invented.
+- Icons are text labels; artwork must be original per the repository's asset rules.
