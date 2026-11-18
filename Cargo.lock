@@ -6469,6 +6469,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "wordcraft-doc",
  "wordcraft-engine",
  "wordcraft-render",
 ]
