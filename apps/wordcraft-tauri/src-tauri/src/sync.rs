@@ -19,7 +19,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::time::Instant;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use wordcraft_doc::props::{CharProps, NumRef};
 use wordcraft_doc::table::{Cell, Row, Table};
@@ -60,13 +60,123 @@ pub struct BlockOut {
     pub runs: Vec<RunOut>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunOut {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
     pub strike: bool,
+}
+
+/// The document as a tree, which is what the front end needs to rebuild the view.
+///
+/// The flat path projection is enough for incremental edits, but a structural change adds or
+/// removes paragraphs, and the view cannot be corrected without knowing what the document now
+/// looks like: which paragraphs are headings, which belong to a list, how a table is shaped.
+#[derive(Clone, Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ProjectedBlock {
+    Para { runs: Vec<RunOut> },
+    Heading { level: u8, runs: Vec<RunOut> },
+    List { ordered: bool, items: Vec<Vec<RunOut>> },
+    Table { rows: Vec<Vec<Vec<Vec<RunOut>>>> },
+}
+
+/// Runs of one paragraph.
+fn runs_of(para: &Paragraph) -> Vec<RunOut> {
+    let mut runs: Vec<RunOut> = Vec::new();
+    let mut start = 0usize;
+    for run in &para.runs {
+        let end = floor_char_boundary(&para.text, start.saturating_add(run.len));
+        if end > start {
+            if let Some(text) = para.text.get(start..end) {
+                if !text.is_empty() {
+                    let props = &run.props;
+                    runs.push(RunOut {
+                        text: text.to_string(),
+                        bold: props.bold == Some(true),
+                        italic: props.italic == Some(true),
+                        underline: props.underline.is_some(),
+                        strike: props.strike == Some(true) || props.double_strike == Some(true),
+                    });
+                }
+            }
+        }
+        start = end;
+    }
+    if start < para.text.len() {
+        if let Some(rest) = para.text.get(floor_char_boundary(&para.text, start)..) {
+            if !rest.is_empty() {
+                runs.push(RunOut { text: rest.to_string(), bold: false, italic: false, underline: false, strike: false });
+            }
+        }
+    }
+    runs
+}
+
+/// The engine's document as a tree the front end can turn back into an editor document.
+///
+/// Consecutive numbered paragraphs are grouped into a list, as OOXML stores them; a paragraph with
+/// an outline level is a heading; a table keeps its rows, cells and the paragraphs inside them.
+pub fn project_structure(doc: &Document) -> Vec<ProjectedBlock> {
+    let mut out: Vec<ProjectedBlock> = Vec::new();
+    let Some(blocks) = doc.story(StoryRef::Body) else { return out };
+
+    // Numbering ids 1 and 2 are what the seed writes for bullets and numbers.
+    let mut open_list: Option<(bool, Vec<Vec<RunOut>>)> = None;
+    let flush = |open: &mut Option<(bool, Vec<Vec<RunOut>>)>, out: &mut Vec<ProjectedBlock>| {
+        if let Some((ordered, items)) = open.take() {
+            if !items.is_empty() {
+                out.push(ProjectedBlock::List { ordered, items });
+            }
+        }
+    };
+
+    for block in blocks.iter() {
+        match &**block {
+            Block::Para(para) => {
+                if let Some(num) = para.props.numbering {
+                    let ordered = num.num == 2;
+                    match &mut open_list {
+                        Some((open_ordered, items)) if *open_ordered == ordered => items.push(runs_of(para)),
+                        Some(_) => {
+                            flush(&mut open_list, &mut out);
+                            open_list = Some((ordered, vec![runs_of(para)]));
+                        }
+                        None => open_list = Some((ordered, vec![runs_of(para)])),
+                    }
+                    continue;
+                }
+                flush(&mut open_list, &mut out);
+                match para.props.outline_level {
+                    Some(level) => out.push(ProjectedBlock::Heading { level: level.saturating_add(1).clamp(1, 9), runs: runs_of(para) }),
+                    None => out.push(ProjectedBlock::Para { runs: runs_of(para) }),
+                }
+            }
+            Block::Table(table) => {
+                flush(&mut open_list, &mut out);
+                let mut rows = Vec::with_capacity(table.rows.len());
+                for row in &table.rows {
+                    let mut cells = Vec::with_capacity(row.cells.len());
+                    for cell in &row.cells {
+                        let mut paragraphs = Vec::new();
+                        for inner in cell.blocks.iter() {
+                            if let Block::Para(p) = &**inner {
+                                paragraphs.push(runs_of(p));
+                            }
+                        }
+                        cells.push(paragraphs);
+                    }
+                    rows.push(cells);
+                }
+                out.push(ProjectedBlock::Table { rows });
+            }
+        }
+    }
+    flush(&mut open_list, &mut out);
+    out
 }
 
 impl BlockOut {
@@ -355,12 +465,36 @@ pub fn sync_load(state: tauri::State<'_, AppState>, blocks: Vec<SeedBlock>) -> R
     Ok(json!({ "blocks": projected, "micros": started.elapsed().as_micros() as u64 }))
 }
 
-/// Apply a batch of operations and return only what changed.
+/// Apply a batch of operations and return what changed.
+///
+/// When `structural` is set the document gained or lost a block, so the flat delta is useless to
+/// the view: the answer carries the whole structure, the new block paths and the caret, and the
+/// front end rebuilds from that in the same reply. Nothing is read afterwards, so there is no
+/// window where the view holds stale indices.
 #[tauri::command]
-pub fn sync_apply(state: tauri::State<'_, AppState>, ops: Vec<SyncOp>) -> Result<Value, String> {
+pub fn sync_apply(state: tauri::State<'_, AppState>, ops: Vec<SyncOp>, structural: Option<bool>) -> Result<Value, String> {
     let mut session = state.session.lock().map_err(|_| lock_error())?;
     let result = apply_ops(&mut session, &ops)?;
     let projected: Vec<Value> = result.blocks.iter().map(BlockOut::to_json).collect();
+    if structural.unwrap_or(false) {
+        let caret = {
+            let focus = session.sel.focus.clone();
+            let offset = session
+                .doc
+                .para(StoryRef::Body, &focus.path)
+                .map_or(0, |p| byte_to_utf16(&p.text, focus.off));
+            json!({ "path": focus.path.0, "offset": offset })
+        };
+        let structure = project_structure(&session.doc);
+        let paths: Vec<Vec<u32>> = project_all(&session.doc).into_iter().map(|b| b.path).collect();
+        return Ok(json!({
+            "blocks": projected,
+            "micros": result.micros,
+            "structure": structure,
+            "paths": paths,
+            "caret": caret,
+        }));
+    }
     Ok(json!({ "blocks": projected, "micros": result.micros }))
 }
 

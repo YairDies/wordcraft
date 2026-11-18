@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ProseMirror, useEditorEffect } from "@nytimes/react-prosemirror";
-import { EditorState, Selection } from "prosemirror-state";
+import { EditorState, Selection, TextSelection } from "prosemirror-state";
 import type { Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { baseKeymap, toggleMark } from "prosemirror-commands";
 import { keymap } from "prosemirror-keymap";
 import { tableEditing } from "prosemirror-tables";
 import { syncApply, syncLoad, syncSnapshot } from "../bridge/sync";
-import type { BlockOut, SyncOp } from "../bridge/sync";
+import type { BlockOut, ProjectedBlock, SyncOp } from "../bridge/sync";
 import { isTauri } from "../bridge/engine";
 import { wordcraftSchema } from "./schema";
 import { normalizeDocxJson } from "./normalize";
 import { blockAt, pathKey } from "./blocks";
 import { blockRuns, runsToFragment, sameRuns } from "./runs";
 import { buildSeed, textblockCount } from "./seed";
+import { structureToDoc } from "./serialize";
 import { translateTransaction } from "./translate";
 
 /** What the surrounding shell can do to the editor. Held in a ref so it never forces a render. */
@@ -128,22 +129,33 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     [apiRef, onUnsupported],
   );
 
-  /** Re-read the engine's block paths and projection. Structure moved, the document did not. */
-  const refreshPaths = useCallback(async () => {
-    const view = apiRef.current.view;
-    if (!view || !isTauri()) return;
-    try {
-      const snapshot = await syncSnapshot();
-      if (snapshot.blocks.length !== textblockCount(view.state.doc)) {
-        onUnsupported?.(`the engine has ${snapshot.blocks.length} paragraphs, the view ${textblockCount(view.state.doc)}`);
-        return;
+  /**
+   * Rebuild the view from the engine's document after a structural edit.
+   *
+   * The engine has already applied the change to its own document, and its answer carries that
+   * document, the new block paths and the caret — all from the same instant. Rebuilding from this
+   * reply means the view is never corrected against indices that have already moved.
+   */
+  const rebuildFromEngine = useCallback(
+    (structure: ProjectedBlock[], newPaths: number[][], caret?: { path: number[]; offset: number }) => {
+      const view = apiRef.current.view;
+      if (!view) return;
+      const doc = structureToDoc(structure);
+      const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
+      paths.current = newPaths;
+      if (caret) {
+        const ordinal = newPaths.findIndex((path) => pathKey(path) === pathKey(caret.path));
+        const target = ordinal >= 0 ? blockAt(tr.doc, ordinal) : null;
+        if (target) {
+          const inside = Math.min(caret.offset, target.node.content.size);
+          tr.setSelection(TextSelection.create(tr.doc, target.start + inside));
+        }
       }
-      paths.current = snapshot.blocks.map((block) => block.path);
-      reconcile(snapshot.blocks);
-    } catch (problem) {
-      onUnsupported?.(String(problem));
-    }
-  }, [apiRef, reconcile, onUnsupported]);
+      tr.setMeta("engineSync", true);
+      view.dispatch(tr);
+    },
+    [apiRef],
+  );
 
   const scheduleSnapshot = useCallback(() => {
     if (snapshotTimer.current) clearTimeout(snapshotTimer.current);
@@ -167,13 +179,16 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
     syncing.current = true;
     const started = performance.now();
     try {
-      const delta = await syncApply(ops);
-      onSynced?.({ roundTripMs: performance.now() - started, engineMs: delta.micros / 1000, ops: ops.length });
+      const delta = await syncApply(ops, structural);
+      const roundTripMs = performance.now() - started;
+      onSynced?.({ roundTripMs, engineMs: delta.micros / 1000, ops: ops.length });
       window.__wcSyncSamples = window.__wcSyncSamples ?? [];
-      window.__wcSyncSamples.push({ roundTripMs: performance.now() - started, engineMs: delta.micros / 1000, ops: ops.length });
-      // A structural operation renumbers the blocks, so the paths are re-read from the engine
-      // rather than the document being rebuilt.
-      if (structural) await refreshPaths();
+      window.__wcSyncSamples.push({ roundTripMs, engineMs: delta.micros / 1000, ops: ops.length });
+      // A structural change renumbers the blocks, so the view is rebuilt from the engine's answer
+      // in this same reply rather than patched against stale indices.
+      if (structural && delta.structure && delta.paths) {
+        rebuildFromEngine(delta.structure, delta.paths, delta.caret);
+      }
     } catch (problem) {
       onUnsupported?.(String(problem));
     } finally {
@@ -187,7 +202,7 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
         scheduleSnapshot();
       }
     }
-  }, [onSynced, onUnsupported, refreshPaths, scheduleSnapshot]);
+  }, [onSynced, onUnsupported, rebuildFromEngine, scheduleSnapshot]);
 
   const enqueue = useCallback(
     (ops: SyncOp[], structural: boolean) => {

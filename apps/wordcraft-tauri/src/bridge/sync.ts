@@ -44,16 +44,30 @@ export interface Projection {
   micros: number;
 }
 
+/** The document as a tree: what the view needs to be rebuilt after a structural change. */
+export type ProjectedBlock =
+  | { kind: "para"; runs: RunOut[] }
+  | { kind: "heading"; level: number; runs: RunOut[] }
+  | { kind: "list"; ordered: boolean; items: RunOut[][] }
+  | { kind: "table"; rows: RunOut[][][][] };
+
 export interface SyncDelta {
   blocks: BlockOut[];
   micros: number;
+  /** Present when the edit was structural: the whole document, its block paths and the caret. */
+  structure?: ProjectedBlock[];
+  paths?: number[][];
+  caret?: { path: number[]; offset: number };
 }
 
 /** Seed the canonical document from the blocks the front end describes. */
 export const syncLoad = (blocks: SeedBlock[]) => invoke<Projection>("sync_load", { blocks });
 
-/** Apply a batch of edits; the answer carries only the blocks that changed. */
-export const syncApply = (ops: SyncOp[]) => invoke<SyncDelta>("sync_apply", { ops });
+/**
+ * Apply a batch of edits. A content edit answers with only the blocks that changed; a structural
+ * one answers with the whole document, so the view is rebuilt from the engine in the same reply.
+ */
+export const syncApply = (ops: SyncOp[], structural = false) => invoke<SyncDelta>("sync_apply", { ops, structural });
 
 /** The engine's whole projection, for correcting the view after an engine-only command. */
 export const syncSnapshot = () => invoke<Projection>("sync_snapshot", {});
