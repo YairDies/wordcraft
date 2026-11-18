@@ -98,11 +98,17 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
       const ordinalOf = new Map<string, number>();
       paths.current.forEach((path, ordinal) => ordinalOf.set(pathKey(path), ordinal));
 
+      // Positions come from the document as it is now, so applying a replacement changes the
+      // positions of everything after it. Walking from the end backwards keeps every later
+      // position valid; doing it forwards collapsed the document to a single block.
+      const ordered = [...blocks]
+        .map((block) => ({ block, ordinal: ordinalOf.get(pathKey(block.path)) }))
+        .filter((entry): entry is { block: BlockOut; ordinal: number } => entry.ordinal !== undefined)
+        .sort((a, b) => b.ordinal - a.ordinal);
+
       let tr = view.state.tr;
       let changed = false;
-      for (const block of blocks) {
-        const ordinal = ordinalOf.get(pathKey(block.path));
-        if (ordinal === undefined) continue;
+      for (const { block, ordinal } of ordered) {
         const current = blockRuns(view.state.doc, ordinal);
         if (!current || sameRuns(current, block.runs)) continue;
         const target = blockAt(view.state.doc, ordinal);
@@ -144,8 +150,11 @@ export function DocxEditor({ apiRef, onUnsupported, onSynced }: DocxEditorProps)
           onUnsupported?.(`the engine cannot hold this document yet: ${problem}`);
           return;
         }
-        const projection = await syncLoad(blocks);
+        // Counted from the same document the seed was built from. Reading it after the round trip
+        // compares the engine against a document that has moved on, which silently rejected every
+        // seed and left the paths unset — the imported document never reached the engine.
         const expected = textblockCount(view.state.doc);
+        const projection = await syncLoad(blocks);
         if (projection.blocks.length !== expected) {
           onUnsupported?.(`the engine built ${projection.blocks.length} paragraphs for ${expected} blocks`);
           return;
