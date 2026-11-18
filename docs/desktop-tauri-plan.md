@@ -86,6 +86,38 @@ stack, and the view is corrected from the result — it holds no history of its 
 after a list and after a table, chained undos, and a final check that engine and view hold the same
 text.
 
+## Phase 3 (first deliverable) — the ribbon and the keyboard as one piece
+
+The ribbon is curated: 24 commands in four tabs (Area, Inicio, Insertar, Vista) with large and
+small buttons and group labels, instead of the engine's 674-command dump.
+
+**One keyboard map** (`src/keyboard/map.ts`) holds each command's label, accelerator and keytip per
+UI language, and three consumers read it: the editor's ProseMirror keymap, the window key handler,
+and the ribbon's tooltips and accessible names. They cannot disagree.
+
+Word's rules are reproduced:
+
+| | Behaviour |
+|---|---|
+| Shortcuts | follow the UI language (Ctrl+B Bold in English, Ctrl+N Negrita in Spanish) and are **reassignable** (File ▸ Options ▸ Keyboard), persisted to localStorage |
+| Keytips | follow the UI language but are **fixed**; Word never lets a ribbon keytip be reassigned |
+| Entry | Alt, then a tab letter, then a command letter (Alt, H, B applies bold); Esc leaves |
+
+**Keytips are implemented here, not with @fluentui-contrib/react-keytips.** The package is
+experimental and cost more than it gave: it overwrote `aria-keyshortcuts` with its own key
+sequence, rendered a tab's label twice, and its portal covered the window with pointer events on,
+swallowing every click aimed at the document. The replacement is a mode (`null` | `root` | a tab
+id), one capture-phase listener, and a positioned span with `pointer-events: none` — no portal.
+
+`scripts/verify-ribbon.mjs` covers the eleven acceptance points and
+`scripts/verify-keytips.mjs` the mode itself (hidden until Alt, Esc leaves, the document stays
+clickable while keytips are shown).
+
+Note on the tab label: Fluent's `Tab` renders a hidden spacer that duplicates the label in raw
+`textContent`, which made the tabs read "ArchivoArchivo" to a naive check. The accessibility tree,
+which is what a screen reader reads, exposes "Archivo" once — the test now asserts the accessible
+name rather than the text content.
+
 ## Open debt: the in-flight window (Option B, explicitly parked)
 
 Three cycles were spent on one bug: text typed while a structural operation is in flight can be

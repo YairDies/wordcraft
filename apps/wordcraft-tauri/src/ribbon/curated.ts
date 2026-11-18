@@ -95,7 +95,7 @@ export const RIBBON: RibbonTab[] = [
       {
         id: "insert.pages",
         label: { es: "Páginas", en: "Pages" },
-        items: [{ id: "insert.pageBreak", size: "large" }],
+        items: [{ id: "insert.pageBreak", size: "small" }],
       },
     ],
   },

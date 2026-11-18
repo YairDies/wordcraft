@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FluentProvider, MessageBar, MessageBarBody, makeStyles, tokens } from "@fluentui/react-components";
-import { Keytips } from "@fluentui-contrib/react-keytips";
+import { KeytipsProvider } from "./keyboard/keytips";
 import { getCatalog, getState, isTauri, runCommand } from "./bridge/engine";
 import type { CommandSpec, DocumentState } from "./bridge/engine";
 import { StatusBar } from "./shell/StatusBar";
@@ -166,9 +166,9 @@ export function App() {
 
   return (
     <FluentProvider theme={themes[theme]} className={styles.app} data-theme={theme}>
-      {/* Keytips must live once, at the root of the FluentProvider. Word's entry key is Alt
-          alone; the package defaults to Alt-Meta, which is not what Word users press. */}
-      <Keytips startSequence="alt" />
+      <KeytipsProvider shortcuts={shortcuts} onRun={run}>
+      {/* Our own keytips: Alt enters, a tab letter narrows, a command letter runs. No portal, so
+          nothing can swallow a click aimed at the document. */}
       <a className="skip-link" href="#wc-document">
         Skip to document
       </a>
@@ -231,6 +231,7 @@ export function App() {
       <StatusBar doc={doc} zoom={zoom} sync={syncSample} />
       <ShortcutDialog open={shortcutDialog} onClose={() => setShortcutDialog(false)} shortcuts={shortcuts} />
       <input type="hidden" value={tabs.length} readOnly />
+      </KeytipsProvider>
     </FluentProvider>
   );
 }

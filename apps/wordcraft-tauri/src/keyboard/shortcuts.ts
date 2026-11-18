@@ -37,6 +37,7 @@ export interface ShortcutApi {
   shortcutFor: (id: string) => string;
   /** The fixed keytip for a command. */
   keytipFor: (id: string) => string;
+
   labelFor: (id: string) => string;
   /** Accelerators a reassignment would collide with. */
   ownerOf: (accelerator: string) => string | null;

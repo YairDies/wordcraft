@@ -32,10 +32,16 @@ const load = async (locale) => {
 await load("en");
 
 // ---- ribbon shape ----
-const tabs = await page.locator('[role="tab"]').allTextContents();
+// Read the accessible names, which is what a screen reader announces. Fluent's Tab renders a
+// hidden spacer that duplicates the label in raw textContent, so counting textContent reports a
+// duplication no assistive technology ever sees.
+const cdp = await page.context().newCDPSession(page);
+await cdp.send("Accessibility.enable");
+const { nodes: axNodes } = await cdp.send("Accessibility.getFullAXTree");
+const tabs = axNodes.filter((n) => n.role?.value === "tab").map((n) => n.name?.value ?? "");
 record(
   "1. the four main tabs are present",
-  ["File", "Home", "Insert", "View"].every((name) => tabs.some((t) => t.trim() === name)),
+  ["File", "Home", "Insert", "View"].every((name) => tabs.includes(name)),
   JSON.stringify(tabs),
 );
 
@@ -57,8 +63,8 @@ record("3. the Bold button advertises its shortcut", aria?.shortcut === "Control
 await page.keyboard.press("Alt");
 await page.waitForTimeout(600);
 const keytips = await page.evaluate(() => {
-  const nodes = [...document.querySelectorAll('[role="tooltip"], .fui-Tooltip, [id*="keytip"], [class*="keytip"]')];
-  const text = nodes.map((n) => (n.textContent ?? "").trim()).filter(Boolean);
+  const nodes = [...document.querySelectorAll("[data-keytip]")];
+  const text = nodes.map((n) => n.getAttribute("data-keytip") ?? "").filter(Boolean);
   return { count: nodes.length, text: text.slice(0, 12) };
 });
 record("4. Alt shows keytips", keytips.count > 0, JSON.stringify(keytips));

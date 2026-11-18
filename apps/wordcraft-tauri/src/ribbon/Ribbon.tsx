@@ -1,8 +1,8 @@
 import { Tab, TabList, Toolbar, makeStyles, tokens } from "@fluentui/react-components";
-import { useKeytipRef } from "@fluentui-contrib/react-keytips";
 import { RIBBON } from "./curated";
 import { RibbonButton } from "./RibbonButton";
 import type { ShortcutApi } from "../keyboard/shortcuts";
+import { Keytip, KeytipAnchor } from "../keyboard/keytips";
 
 const useStyles = makeStyles({
   ribbon: {
@@ -16,9 +16,8 @@ const useStyles = makeStyles({
   panel: {
     display: "flex",
     alignItems: "flex-start",
-    gap: "0",
     padding: "4px 6px 2px",
-    minHeight: "84px",
+    minHeight: "86px",
     overflowX: "auto",
   },
   group: {
@@ -29,7 +28,7 @@ const useStyles = makeStyles({
     borderRight: `1px solid ${tokens.colorNeutralStroke2}`,
     ":last-child": { borderRight: "none" },
   },
-  groupItems: { display: "flex", flexWrap: "wrap", gap: "2px", alignItems: "center", maxWidth: "260px" },
+  groupItems: { display: "flex", flexWrap: "wrap", gap: "2px", alignItems: "center", maxWidth: "280px" },
   groupLabel: {
     fontSize: "11px",
     color: tokens.colorNeutralForeground3,
@@ -37,29 +36,6 @@ const useStyles = makeStyles({
     whiteSpace: "nowrap",
   },
 });
-
-interface TabWithKeytipProps {
-  id: string;
-  keytip: string;
-  label: string;
-  onSelect: (id: string) => void;
-}
-
-/** A tab carries the first-level keytip: Alt+H opens Home. */
-function RibbonTabButton({ id, keytip, label, onSelect }: TabWithKeytipProps) {
-  const keytipRef = useKeytipRef({
-    keySequences: [keytip],
-    // An empty string, not the sequence: the library renders `content` inside the tab, and the
-    // tab then reads "FileFile" to a screen reader.
-    content: "",
-    onExecute: () => onSelect(id),
-  });
-  return (
-    <Tab ref={keytipRef} value={id} title={`${label} (Alt+${keytip})`}>
-      {label}
-    </Tab>
-  );
-}
 
 interface RibbonProps {
   activeTab: string;
@@ -69,13 +45,12 @@ interface RibbonProps {
 }
 
 /**
- * Word's ribbon: first-level keytips on the tabs, second-level keytips on the commands inside
- * them. Every button is created with its keytip and accelerator, from the same keyboard map.
+ * Word's ribbon. First-level keytips sit on the tabs, second-level ones on the commands inside
+ * them, both drawn by our own `Keytip` — no portal, no library attribute rewriting.
  */
 export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts }: RibbonProps) {
   const styles = useStyles();
   const active = RIBBON.find((tab) => tab.id === activeTab) ?? RIBBON[0];
-  const tabKeytip = shortcuts.keytipFor(active.id);
 
   return (
     <div className={styles.ribbon}>
@@ -87,13 +62,12 @@ export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts }: RibbonProps
         aria-label="Ribbon"
       >
         {RIBBON.map((tab) => (
-          <RibbonTabButton
-            key={tab.id}
-            id={tab.id}
-            keytip={shortcuts.keytipFor(tab.id)}
-            label={shortcuts.labelFor(tab.id)}
-            onSelect={onSelectTab}
-          />
+          <Tab key={tab.id} value={tab.id} title={`${shortcuts.labelFor(tab.id)} (Alt, ${shortcuts.keytipFor(tab.id)})`}>
+            <KeytipAnchor>
+              <Keytip scope="root" sequence={shortcuts.keytipFor(tab.id)} placement="bottom" />
+              <span>{shortcuts.labelFor(tab.id)}</span>
+            </KeytipAnchor>
+          </Tab>
         ))}
       </TabList>
       <Toolbar className={styles.panel} aria-label={`${shortcuts.labelFor(active.id)} commands`}>
@@ -105,7 +79,7 @@ export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts }: RibbonProps
                   key={`${group.id}:${item.id}:${item.size}`}
                   id={item.id}
                   size={item.size}
-                  tabKeytip={tabKeytip}
+                  tabId={active.id}
                   shortcuts={shortcuts}
                   onRun={onRun}
                 />
