@@ -18,6 +18,8 @@ import { detectLocale, storeLocale } from "./keyboard/locale";
 import type { Locale } from "./keyboard/locale";
 import { matchesAccelerator, useShortcuts } from "./keyboard/shortcuts";
 import { ShortcutDialog } from "./keyboard/ShortcutDialog";
+import { Backstage } from "./backstage/Backstage";
+import { pickDocument, pickSaveTarget } from "./backstage/fileActions";
 import { FontDialog } from "./dialogs/FontDialog";
 import { ParagraphDialog } from "./dialogs/ParagraphDialog";
 import { PageSetupDialog } from "./dialogs/PageSetupDialog";
@@ -63,6 +65,9 @@ export function App() {
   const [activeCommands, setActiveCommands] = useState<string[]>([]);
   const [dialog, setDialog] = useState<"font" | "paragraph" | "page" | null>(null);
   const [pageValues, setPageValues] = useState<PageValues>({ top: 72, bottom: 72, left: 96, right: 96, orientation: "portrait" });
+  const [backstage, setBackstage] = useState(false);
+  const [recents, setRecents] = useState<string[]>([]);
+  const [confirmClose, setConfirmClose] = useState(false);
   const activeSet = useMemo(() => new Set(activeCommands), [activeCommands]);
 
   const shortcuts = useShortcuts(locale);
@@ -112,6 +117,22 @@ export function App() {
     };
   }, [refresh]);
 
+  /** Opens a .docx the person picked through the operating system's own file dialog. */
+  const openFromDialog = useCallback(async () => {
+    try {
+      const picked = await pickDocument();
+      if (!picked) return;
+      const file = new File([picked.bytes as BlobPart], picked.name, {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      await openDocx(file);
+      setRecents((current) => [picked.name, ...current.filter((name) => name !== picked.name)].slice(0, 6));
+      setBackstage(false);
+    } catch (problem) {
+      setError(String(problem));
+    }
+  }, []);
+
   const openDocx = useCallback(async (file: File) => {
     try {
       setNotice(`Opening ${file.name}…`);
@@ -130,9 +151,46 @@ export function App() {
     async (id: string) => {
       // Diagnostic breadcrumb: which command actually reached the shell.
       (window as unknown as { __lastRun?: string }).__lastRun = id;
-      // Tabs are shell navigation, not engine commands.
+      // Tabs are shell navigation, not engine commands. File is not a tab at all: Word replaces
+      // the whole window with the Backstage.
+      if (id === "tab.file") {
+        setBackstage(true);
+        return;
+      }
       if (id.startsWith("tab.")) {
         setTab(id);
+        return;
+      }
+      if (id === "file.backstage") {
+        setBackstage((open) => !open);
+        return;
+      }
+      if (id === "file.open" || id === "file.openRecent") {
+        await openFromDialog();
+        return;
+      }
+      if (id === "file.saveAs" || id === "file.saveCopy") {
+        try {
+          const text = editorApi.current.view?.state.doc.textBetween(0, editorApi.current.view.state.doc.content.size, "\n\n") ?? "";
+          const written = await pickSaveTarget(`${doc?.title ?? "Documento1"}.docx`, text);
+          if (written) setNotice(`Guardado en ${written}. La exportación .docx real llegará con el escritor del motor.`);
+        } catch (problem) {
+          setError(String(problem));
+        }
+        return;
+      }
+      if (id === "file.close") {
+        if (doc?.dirty) {
+          setConfirmClose(true);
+          return;
+        }
+        editorApi.current.loadDocument({ type: "doc", content: [{ type: "paragraph" }] });
+        setBackstage(false);
+        setNotice("Documento cerrado.");
+        return;
+      }
+      if (id === "file.options" || id === "file.new" || id === "file.print" || id === "file.share" || id === "file.export" || id === "file.home") {
+        setNotice(`${id} todavía no está conectado.`);
         return;
       }
       if (id === "dialog.font") {
@@ -221,7 +279,10 @@ export function App() {
         onOpen={() => fileInput.current?.click()}
         onOpenShortcuts={() => setShortcutDialog(true)}
       />
-      <Ribbon activeTab={tab} onSelectTab={setTab} onRun={run} shortcuts={shortcuts} active={activeSet} />
+      {/* Word's Backstage covers the window; the ribbon goes with it. */}
+      {backstage ? null : (
+        <Ribbon activeTab={tab} onSelectTab={(id) => (id === "tab.file" ? setBackstage(true) : setTab(id))} onRun={run} shortcuts={shortcuts} active={activeSet} />
+      )}
       <input
         ref={fileInput}
         type="file"
@@ -245,6 +306,19 @@ export function App() {
       <span id="wc-editor-hint" hidden>
         Editing area. Use the ribbon, its keytips (Alt) or Word's keyboard shortcuts.
       </span>
+      {backstage ? (
+        <Backstage
+          shortcuts={shortcuts}
+          doc={doc}
+          recents={recents}
+          notice={notice}
+          onCommand={run}
+          onClose={() => {
+            setBackstage(false);
+            requestAnimationFrame(() => editorApi.current.view?.focus());
+          }}
+        />
+      ) : (
       <div
         id="wc-document"
         className={dragging ? `${styles.document} ${styles.dropTarget}` : styles.document}
@@ -268,6 +342,13 @@ export function App() {
           onUnsupported={(reason) => setError(`That edit is not synchronised with the engine yet: ${reason}.`)}
         />
       </div>
+      )}
+      {confirmClose ? (
+        <div role="alertdialog" aria-label="Cambios sin guardar" style={{ padding: "10px 16px" }}>
+          Hay cambios sin guardar. <button type="button" onClick={() => { setConfirmClose(false); editorApi.current.loadDocument({ type: "doc", content: [{ type: "paragraph" }] }); setBackstage(false); }}>Cerrar sin guardar</button>
+          <button type="button" onClick={() => setConfirmClose(false)}>Cancelar</button>
+        </div>
+      ) : null}
       <StatusBar doc={doc} zoom={zoom} sync={syncSample} />
       <FontDialog
         open={dialog === "font"}

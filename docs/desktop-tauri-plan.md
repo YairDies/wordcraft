@@ -109,6 +109,20 @@ sequence, rendered a tab's label twice, and its portal covered the window with p
 swallowing every click aimed at the document. The replacement is a mode (`null` | `root` | a tab
 id), one capture-phase listener, and a positioned span with `pointer-events: none` — no portal.
 
+**Backstage.** File is not a ribbon tab: it replaces the window, as in Word. `backstage/Backstage.tsx`
+renders a left `listbox` of the pages (Inicio, Nuevo, Abrir, Guardar, Guardar como, Imprimir,
+Compartir, Exportar, Cerrar, Opciones) with the selected page beside it. Alt+A (Spanish, "Archivo")
+or Alt+F opens and closes it, focus lands on the first option, arrows or Tab move through them,
+Enter opens a page, and Esc returns to the document with the caret back in it. The ribbon is
+hidden while it is open, because Word's Backstage covers the window.
+
+The file actions use the operating system's own pickers through Tauri's dialog plugin
+(`tauri-plugin-dialog` + `@tauri-apps/plugin-dialog`, `dialog:default` in the capability). The
+webview has no filesystem of its own, so `src-tauri/src/files.rs` adds `read_bytes` and
+`write_text`; the paths always come from a picker the person used. Saving a real .docx still needs
+the engine's writer, which the bridge does not drive yet, so the save flow stores text and says so;
+PDF export is recorded as debt.
+
 **Dialogs** — Font, Paragraph and Page Setup — open from their accelerators (Ctrl+M / Ctrl+D for
 Font by language, Ctrl+Alt+P, Ctrl+Alt+S) and from the dialog launcher at the corner of a ribbon
 group. They share one frame (`dialogs/DialogShell.tsx`): a `TabList`, **Ctrl+Tab** between tabs

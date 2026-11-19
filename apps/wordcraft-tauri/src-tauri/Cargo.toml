@@ -22,6 +22,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Native file dialogs: the Backstage opens and saves through the operating system's own pickers.
+tauri-plugin-dialog = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 wordcraft-engine = { workspace = true }

@@ -102,6 +102,9 @@ export function KeytipsProvider({ shortcuts, onRun, children }: ProviderProps) {
       if (mode === "root") {
         const tab = tabFor(key);
         setMode(tab);
+        // The shell is told too: File is not a ribbon tab at all, it replaces the window with the
+        // Backstage, so the tab letters have to reach whoever knows what each one means.
+        if (tab) onRun(tab);
         return;
       }
       const command = commandFor(mode, key);

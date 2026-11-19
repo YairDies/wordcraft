@@ -63,6 +63,21 @@ export const COMMANDS: CommandKeys[] = [
   // View
   { id: "view.theme", label: { es: "Tema de la vista", en: "View theme" }, shortcut: { es: "", en: "" }, keytip: { es: "T", en: "T" } },
 
+  // Backstage. Word opens File with Alt+F (English) and Alt+A (Spanish, "Archivo").
+  { id: "file.backstage", label: { es: "Archivo", en: "File" }, shortcut: { es: "Alt+A", en: "Alt+F" }, keytip: { es: "", en: "" } },
+  // The Backstage's landing page. Without an entry here the panel announced its raw id.
+  { id: "file.home", label: { es: "Inicio", en: "Home" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+  { id: "file.new", label: { es: "Nuevo", en: "New" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+  { id: "file.open", label: { es: "Abrir", en: "Open" }, shortcut: { es: "Mod+A", en: "Mod+O" }, keytip: { es: "", en: "" } },
+  { id: "file.save", label: { es: "Guardar", en: "Save" }, shortcut: { es: "Mod+G", en: "Mod+S" }, keytip: { es: "", en: "" } },
+  { id: "file.saveAs", label: { es: "Guardar como", en: "Save As" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+  { id: "file.saveCopy", label: { es: "Guardar una copia", en: "Save a Copy" }, shortcut: { es: "Alt+G", en: "Alt+S" }, keytip: { es: "", en: "" } },
+  { id: "file.print", label: { es: "Imprimir", en: "Print" }, shortcut: { es: "Mod+P", en: "Mod+P" }, keytip: { es: "", en: "" } },
+  { id: "file.share", label: { es: "Compartir", en: "Share" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+  { id: "file.export", label: { es: "Exportar", en: "Export" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+  { id: "file.close", label: { es: "Cerrar", en: "Close" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+  { id: "file.options", label: { es: "Opciones", en: "Options" }, shortcut: { es: "", en: "" }, keytip: { es: "", en: "" } },
+
   // Dialogs. Word opens Font with Ctrl+D (English) and Ctrl+M (Spanish, from "Fuente/M").
   { id: "dialog.font", label: { es: "Fuente…", en: "Font…" }, shortcut: { es: "Mod+M", en: "Mod+D" }, keytip: { es: "F", en: "F" } },
   { id: "dialog.paragraph", label: { es: "Párrafo…", en: "Paragraph…" }, shortcut: { es: "Mod+Alt+P", en: "Mod+Alt+P" }, keytip: { es: "P", en: "P" } },

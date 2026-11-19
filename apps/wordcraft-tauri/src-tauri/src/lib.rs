@@ -14,6 +14,7 @@
 //! * `engine_render_page` — rasterise one laid-out page to PNG, for the document canvas.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+mod files;
 mod sync;
 
 use std::sync::Mutex;
@@ -113,6 +114,8 @@ fn engine_render_page(state: State<'_, AppState>, index: usize, scale: f64, dark
 /// while starting is a word processor that lost someone's work.
 pub fn run() {
     let app = tauri::Builder::default()
+        // Native open/save pickers for the Backstage.
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             engine_catalog,
@@ -121,7 +124,9 @@ pub fn run() {
             engine_render_page,
             sync::sync_load,
             sync::sync_apply,
-            sync::sync_snapshot
+            sync::sync_snapshot,
+            files::read_bytes,
+            files::write_text
         ])
         .run(tauri::generate_context!());
     if let Err(err) = app {
