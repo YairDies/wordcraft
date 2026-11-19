@@ -56,6 +56,25 @@ body {
   left: 8px;
 }
 
+/* The small dialog launcher Word puts at a ribbon group's corner. */
+.ribbon-launcher {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--colorNeutralForeground3, #616161);
+  padding: 0 4px 0 0;
+  line-height: 1;
+}
+
+.ribbon-launcher:hover {
+  color: var(--colorNeutralForeground1, #1a1a1a);
+}
+
+.ribbon-launcher:focus-visible {
+  outline: 2px solid var(--colorStrokeFocus2, #0f6cbd);
+  outline-offset: 1px;
+}
+
 /* ---------- Keytip portals ----------
    The keytips root renders a portal as large as the window with pointer events on, so while
    keytip mode is active it swallowed every click aimed at the document. The portal container

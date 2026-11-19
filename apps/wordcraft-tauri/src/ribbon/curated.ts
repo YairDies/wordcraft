@@ -15,6 +15,8 @@ export interface RibbonGroup {
   id: string;
   label: { es: string; en: string };
   items: RibbonItem[];
+  /** Word puts a small dialog launcher at the group's corner; it opens the group's dialog. */
+  launcher?: string;
 }
 
 export interface RibbonTab {
@@ -53,6 +55,7 @@ export const RIBBON: RibbonTab[] = [
       {
         id: "home.font",
         label: { es: "Fuente", en: "Font" },
+        launcher: "dialog.font",
         items: [
           { id: "format.bold", size: "large" },
           { id: "format.italic", size: "small" },
@@ -63,6 +66,7 @@ export const RIBBON: RibbonTab[] = [
       {
         id: "home.paragraph",
         label: { es: "Párrafo", en: "Paragraph" },
+        launcher: "dialog.paragraph",
         items: [
           { id: "para.bullets", size: "large" },
           { id: "para.numbering", size: "small" },
@@ -95,6 +99,7 @@ export const RIBBON: RibbonTab[] = [
       {
         id: "insert.pages",
         label: { es: "Páginas", en: "Pages" },
+        launcher: "dialog.pageSetup",
         items: [{ id: "insert.pageBreak", size: "small" }],
       },
     ],

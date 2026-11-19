@@ -109,6 +109,21 @@ sequence, rendered a tab's label twice, and its portal covered the window with p
 swallowing every click aimed at the document. The replacement is a mode (`null` | `root` | a tab
 id), one capture-phase listener, and a positioned span with `pointer-events: none` — no portal.
 
+**Dialogs** — Font, Paragraph and Page Setup — open from their accelerators (Ctrl+M / Ctrl+D for
+Font by language, Ctrl+Alt+P, Ctrl+Alt+S) and from the dialog launcher at the corner of a ribbon
+group. They share one frame (`dialogs/DialogShell.tsx`): a `TabList`, **Ctrl+Tab** between tabs
+(Fluent navigates with arrows, Word uses Ctrl+Tab), Enter to accept and Esc to cancel.
+
+Fluent's `Dialog` supplies the parts that are easy to get wrong: focus trap, Esc, and restoring
+focus to the opener. When the dialog was opened by a keystroke there may be nothing to restore to,
+so the editor takes focus explicitly on close.
+
+Values are applied through the view's own transactions, so they travel the same path as typing.
+Font writes the marks and the `textStyle` attributes; Paragraph writes the block attributes
+(alignment, indents, spacing, line height) and, with a collapsed caret, still formats the paragraph
+the caret sits in — as Word does. Page setup changes the sheet's margins and orientation and is
+view-level until the engine models sections.
+
 **Icons** come from @fluentui/react-icons — Fluent UI System Icons, MIT licensed, the same family
 Microsoft 365 uses. `Regular` is the resting state; `Filled` marks a command that is on, the Fluent
 2 convention and what Word does when Bold is active. Sizes follow the ribbon's proportions (32 px

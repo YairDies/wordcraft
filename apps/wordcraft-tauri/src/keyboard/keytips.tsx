@@ -52,6 +52,10 @@ export function KeytipsProvider({ shortcuts, onRun, children }: ProviderProps) {
         for (const item of group.items) {
           if (shortcuts.keytipFor(item.id).toLowerCase() === key.toLowerCase()) return item.id;
         }
+        // A group's dialog launcher is reachable by keytip too: Alt+H, P opens Paragraph.
+        if (group.launcher && shortcuts.keytipFor(group.launcher).toLowerCase() === key.toLowerCase()) {
+          return group.launcher;
+        }
       }
       return null;
     },
@@ -109,13 +113,6 @@ export function KeytipsProvider({ shortcuts, onRun, children }: ProviderProps) {
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [mode, commandFor, tabFor, onRun]);
-
-  // Losing focus leaves keytip mode, so a stale overlay cannot linger.
-  useEffect(() => {
-    const onBlur = () => setMode(null);
-    window.addEventListener("blur", onBlur);
-    return () => window.removeEventListener("blur", onBlur);
-  }, []);
 
   const api = useMemo(() => ({ mode, setMode }), [mode]);
   return <KeytipsContext.Provider value={api}>{children}</KeytipsContext.Provider>;

@@ -88,7 +88,20 @@ export function Ribbon({ activeTab, onSelectTab, onRun, shortcuts, active }: Rib
                 />
               ))}
             </div>
-            <span className={styles.groupLabel}>{group.label[shortcuts.locale]}</span>
+            <span className={styles.groupLabel}>
+              {group.launcher ? (
+                <button
+                  type="button"
+                  className="ribbon-launcher"
+                  onClick={() => onRun(group.launcher as string)}
+                  aria-label={`${group.label[shortcuts.locale]}: más opciones`}
+                  title={`${shortcuts.labelFor(group.launcher)}`}
+                >
+                  ⌄
+                </button>
+              ) : null}
+              {group.label[shortcuts.locale]}
+            </span>
           </div>
         ))}
       </Toolbar>

@@ -18,6 +18,14 @@ import { detectLocale, storeLocale } from "./keyboard/locale";
 import type { Locale } from "./keyboard/locale";
 import { matchesAccelerator, useShortcuts } from "./keyboard/shortcuts";
 import { ShortcutDialog } from "./keyboard/ShortcutDialog";
+import { FontDialog } from "./dialogs/FontDialog";
+import { ParagraphDialog } from "./dialogs/ParagraphDialog";
+import { PageSetupDialog } from "./dialogs/PageSetupDialog";
+import { applyFont, applyPage, applyParagraph } from "./dialogs/apply";
+import type { FontValues, PageValues, ParagraphValues } from "./dialogs/apply";
+
+/** Commands ProseMirror's keymap already binds inside the document. */
+const EDITOR_OWNED = new Set(["format.bold", "format.italic", "format.underline"]);
 
 const useStyles = makeStyles({
   app: {
@@ -53,6 +61,8 @@ export function App() {
   const [shortcutDialog, setShortcutDialog] = useState(false);
   const [syncSample, setSyncSample] = useState<SyncSample | null>(null);
   const [activeCommands, setActiveCommands] = useState<string[]>([]);
+  const [dialog, setDialog] = useState<"font" | "paragraph" | "page" | null>(null);
+  const [pageValues, setPageValues] = useState<PageValues>({ top: 72, bottom: 72, left: 96, right: 96, orientation: "portrait" });
   const activeSet = useMemo(() => new Set(activeCommands), [activeCommands]);
 
   const shortcuts = useShortcuts(locale);
@@ -60,6 +70,14 @@ export function App() {
   catalogRef.current = catalog;
   const editorApi = useRef<EditorApi>({ view: null, loadDocument: () => {}, focus: () => {}, resync: () => {} });
   const fileInput = useRef<HTMLInputElement | null>(null);
+
+  /** Closes a dialog and returns the caret to the document, as Word does. */
+  const closeDialog = useCallback(() => {
+    setDialog(null);
+    // Fluent restores focus to whatever opened the dialog; when it was opened by a keyboard
+    // shortcut there may be nothing to restore to, so the editor takes it explicitly.
+    requestAnimationFrame(() => editorApi.current.view?.focus());
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
@@ -110,9 +128,23 @@ export function App() {
 
   const run = useCallback(
     async (id: string) => {
+      // Diagnostic breadcrumb: which command actually reached the shell.
+      (window as unknown as { __lastRun?: string }).__lastRun = id;
       // Tabs are shell navigation, not engine commands.
       if (id.startsWith("tab.")) {
         setTab(id);
+        return;
+      }
+      if (id === "dialog.font") {
+        setDialog("font");
+        return;
+      }
+      if (id === "dialog.paragraph") {
+        setDialog("paragraph");
+        return;
+      }
+      if (id === "dialog.pageSetup") {
+        setDialog("page");
         return;
       }
       if (id === "view.theme") {
@@ -150,11 +182,16 @@ export function App() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, [contenteditable='true'], .ProseMirror")) return;
+      // A field being typed into keeps its own keys, except for the accelerators below.
+      if (target?.closest("input, textarea")) return;
+      const inEditor = Boolean(target?.closest("[contenteditable='true'], .ProseMirror"));
       for (const command of COMMANDS) {
         const accelerator = shortcuts.shortcutFor(command.id);
         if (!accelerator) continue;
         if (!matchesAccelerator(event, accelerator)) continue;
+        // Inside the document ProseMirror's own keymap owns the mark shortcuts; anything else —
+        // opening a dialog, finding, undo — has to work while the caret is in the text.
+        if (inEditor && EDITOR_OWNED.has(command.id)) continue;
         event.preventDefault();
         void run(command.id);
         return;
@@ -232,6 +269,36 @@ export function App() {
         />
       </div>
       <StatusBar doc={doc} zoom={zoom} sync={syncSample} />
+      <FontDialog
+        open={dialog === "font"}
+        initial={{ family: "Calibri", size: 11, bold: false, italic: false, underline: false, strike: false, color: "" }}
+        onCancel={closeDialog}
+        onApply={(values: FontValues) => {
+          const view = editorApi.current.view;
+          if (view) applyFont(view, values);
+          closeDialog();
+        }}
+      />
+      <ParagraphDialog
+        open={dialog === "paragraph"}
+        initial={{ align: "left", indentLeft: 0, indentRight: 0, indentFirst: 0, spaceBefore: 0, spaceAfter: 8, lineHeight: 1.5 }}
+        onCancel={closeDialog}
+        onApply={(values: ParagraphValues) => {
+          const view = editorApi.current.view;
+          if (view) applyParagraph(view, values);
+          closeDialog();
+        }}
+      />
+      <PageSetupDialog
+        open={dialog === "page"}
+        initial={pageValues}
+        onCancel={closeDialog}
+        onApply={(values: PageValues) => {
+          setPageValues(values);
+          applyPage(document.querySelector<HTMLElement>(".wc-sheet"), values);
+          closeDialog();
+        }}
+      />
       <ShortcutDialog open={shortcutDialog} onClose={() => setShortcutDialog(false)} shortcuts={shortcuts} />
       <input type="hidden" value={tabs.length} readOnly />
       </KeytipsProvider>

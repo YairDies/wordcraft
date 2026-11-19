@@ -32,7 +32,9 @@ export const COMMANDS: CommandKeys[] = [
   // Home › Clipboard
   { id: "edit.cut", label: { es: "Cortar", en: "Cut" }, shortcut: { es: "Mod+X", en: "Mod+X" }, keytip: { es: "C", en: "X" } },
   { id: "edit.copy", label: { es: "Copiar", en: "Copy" }, shortcut: { es: "Mod+C", en: "Mod+C" }, keytip: { es: "O", en: "C" } },
-  { id: "edit.paste", label: { es: "Pegar", en: "Paste" }, shortcut: { es: "Mod+V", en: "Mod+V" }, keytip: { es: "P", en: "V" } },
+  // "V" like the accelerator, not "P": Word uses P for the Paragraph launcher, and two keytips
+  // with the same letter inside a tab is a collision the resolver settles by order.
+  { id: "edit.paste", label: { es: "Pegar", en: "Paste" }, shortcut: { es: "Mod+V", en: "Mod+V" }, keytip: { es: "V", en: "V" } },
 
   // Home › Font
   { id: "format.bold", label: { es: "Negrita", en: "Bold" }, shortcut: { es: "Mod+N", en: "Mod+B" }, keytip: { es: "N", en: "B" } },
@@ -60,6 +62,11 @@ export const COMMANDS: CommandKeys[] = [
 
   // View
   { id: "view.theme", label: { es: "Tema de la vista", en: "View theme" }, shortcut: { es: "", en: "" }, keytip: { es: "T", en: "T" } },
+
+  // Dialogs. Word opens Font with Ctrl+D (English) and Ctrl+M (Spanish, from "Fuente/M").
+  { id: "dialog.font", label: { es: "Fuente…", en: "Font…" }, shortcut: { es: "Mod+M", en: "Mod+D" }, keytip: { es: "F", en: "F" } },
+  { id: "dialog.paragraph", label: { es: "Párrafo…", en: "Paragraph…" }, shortcut: { es: "Mod+Alt+P", en: "Mod+Alt+P" }, keytip: { es: "P", en: "P" } },
+  { id: "dialog.pageSetup", label: { es: "Configurar página…", en: "Page Setup…" }, shortcut: { es: "Mod+Alt+S", en: "Mod+Alt+S" }, keytip: { es: "C", en: "S" } },
 ];
 
 const byId = new Map(COMMANDS.map((command) => [command.id, command]));
